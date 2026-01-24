@@ -5,13 +5,12 @@ import json
 import shutil
 import requests
 from flask import Flask, request, jsonify, send_file
-from PIL import Image
+from PIL import Image, ImageChops, ImageStat
 from PIL.PngImagePlugin import PngInfo
 from io import BytesIO
 from datetime import datetime, timedelta
 import hashlib
 from concurrent.futures import ThreadPoolExecutor
-last_image_hash = None
 
 app = Flask(__name__)
 
@@ -22,74 +21,102 @@ TILE_SIZE = 1000
 BASE_URL = "https://backend.wplace.live/files/s0/tiles"
 HEADERS = {"User-Agent": "Mozilla/5.0"}
 
-# Estado Global en Memoria
 state = {
     "running": False,
     "coords": {},
     "interval": 30,
     "limit_mb": 1000,
-    "duration_hours": 24,    # Nuevo
-    "start_time": None,       # Nuevo
-    "last_hash": None
+    "duration_hours": 24,
+    "start_time": None,
+    "last_hash": None,
+    # --- NUEVO: CONFIG TELEGRAM ---
+    "telegram_token": "8484800468:AAET6mXnQKRavmMGlidhoqfKntkFfciYjjo",
+    "telegram_chat_id": "6921079409",
+    "alert_threshold": 5.0,  # % de cambio para considerar ataque
+    "sentry_mode": False
 }
 
+# --- UTILIDADES TELEGRAM ---
+def send_telegram(msg, warning=False):
+    token = state.get("telegram_token")
+    chat_id = state.get("telegram_chat_id")
+    if not token or not chat_id: return
+
+    prefix = "🚨 <b>ALERTA WPLACE</b> 🚨\n" if warning else "ℹ️ <b>WPlace Info</b>\n"
+    text = prefix + msg
+    try:
+        url = f"https://api.telegram.org/bot{token}/sendMessage"
+        requests.post(url, json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"}, timeout=5)
+    except Exception as e:
+        print(f"Error Telegram: {e}")
+
+# --- PERSISTENCIA ---
 def save_state_to_disk():
-    """Guarda la configuración actual en disco para sobrevivir reinicios"""
-    with open(STATE_FILE, 'w') as f:
-        json.dump(state, f)
+    with open(STATE_FILE, 'w') as f: json.dump(state, f)
 
 def load_state_from_disk():
-    """Carga configuración y reanuda si estaba corriendo"""
     global state
     if os.path.exists(STATE_FILE):
         try:
             with open(STATE_FILE, 'r') as f:
                 saved = json.load(f)
                 state.update(saved)
-                # Si estaba corriendo, reanudamos el hilo
                 if state["running"]:
-                    print(">>> REANUDANDO TAREA TRAS REINICIO...")
+                    print(">>> Reanudando tarea...")
                     start_thread()
-        except Exception as e:
-            print(f"Error cargando estado: {e}")
+                    send_telegram("🔋 <b>Servidor Reiniciado:</b> Tarea reanudada automáticamente.")
+        except Exception as e: print(f"Error carga: {e}")
 
-def check_disk_usage_ok(limit_mb):
-    if not os.path.exists(STORAGE_DIR): return True
-    total = sum(d.stat().st_size for d in os.scandir(STORAGE_DIR) if d.is_file())
-    return (total / (1024 * 1024)) < limit_mb
-
+# --- MOTOR DE CAPTURA ---
 def fetch_tile(tx, ty):
-    """Función auxiliar para descargar un solo tile"""
     try:
-        url = f"{BASE_URL}/{tx}/{ty}.png"
-        r = requests.get(url, headers=HEADERS, timeout=8)
+        r = requests.get(f"{BASE_URL}/{tx}/{ty}.png", headers=HEADERS, timeout=8)
         if r.status_code == 200:
-            # Retornamos las coordenadas y la imagen convertida
             return (tx, ty, Image.open(BytesIO(r.content)).convert("RGBA"))
-    except Exception:
-        pass
+    except: pass
     return (tx, ty, None)
 
-def worker_timelapse():
-    print(">>> [SISTEMA] Worker iniciado: Paralelismo Activo + Detección de Cambios")
+def calculate_change_percentage(img1, img2):
+    """Calcula qué porcentaje de píxeles son diferentes entre dos imágenes"""
+    try:
+        # Diferencia absoluta
+        diff = ImageChops.difference(img1, img2)
+        # Si la diferencia es negra pura, no hay cambios.
+        if not diff.getbbox(): return 0.0
+        
+        # Contamos píxeles no negros (que cambiaron)
+        # Convertimos a escala de grises para simplificar cálculo
+        diff_l = diff.convert('L')
+        # Histograma devuelve lista de conteo de píxeles por valor (0-255)
+        hist = diff_l.histogram()
+        # El valor en el índice 0 son los píxeles negros (sin cambio)
+        total_pixels = img1.size[0] * img1.size[1]
+        unchanged_pixels = hist[0]
+        changed_pixels = total_pixels - unchanged_pixels
+        
+        return (changed_pixels / total_pixels) * 100.0
+    except:
+        return 0.0
 
-    # 1. Recuperar info del tiempo (Persistencia de reinicio)
+def worker_timelapse():
+    print(">>> [SENTRY] Worker Iniciado")
+    send_telegram(f"▶️ <b>Tarea Iniciada</b>\nIntervalo: {state['interval']}m\nModo Centinela: {'ACTIVADO' if state['sentry_mode'] else 'OFF'}")
+
     try:
         start_dt = datetime.fromisoformat(state["start_time"])
-        duration_h = state["duration_hours"]
-        end_dt = start_dt + timedelta(hours=duration_h)
+        end_dt = start_dt + timedelta(hours=state["duration_hours"])
     except:
-        print(">>> [ERROR] Error en formato de tiempo. Abortando worker.")
-        state["running"] = False
-        return
+        state["running"] = False; return
+
+    last_image_obj = None # Para comparar cambios visuales
 
     while state["running"]:
-        # 2. Verificar si el tiempo real ya expiró
         if datetime.now() >= end_dt:
-            print(">>> [FIN] Se alcanzó el tiempo límite de la tarea.")
+            print(">>> Tiempo completado.")
             state["running"] = False
-            state["last_hash"] = None 
+            state["last_hash"] = None
             save_state_to_disk()
+            send_telegram("✅ <b>Tarea Finalizada</b>\nEl tiempo programado ha concluido.")
             break
 
         try:
@@ -98,37 +125,31 @@ def worker_timelapse():
             y_start, y_end = c["y_start"], c["y_end"]
             width, height = x_end - x_start, y_end - y_start
             
-            lienzo = Image.new("RGBA", (width, height), (0, 0, 0, 0))
-            
-            # 3. PREPARAR LISTA DE TILES
-            t_start_x, t_end_x = x_start // TILE_SIZE, (x_end - 1) // TILE_SIZE
-            t_start_y, t_end_y = y_start // TILE_SIZE, (y_end - 1) // TILE_SIZE
-            
-            tiles_to_download = []
-            for tx in range(t_start_x, t_end_x + 1):
-                for ty in range(t_start_y, t_end_y + 1):
-                    tiles_to_download.append((tx, ty))
+            lienzo = Image.new("RGBA", (width, height))
+            tiles_req = [(tx, ty) for tx in range(x_start//TILE_SIZE, (x_end-1)//TILE_SIZE+1) 
+                                  for ty in range(y_start//TILE_SIZE, (y_end-1)//TILE_SIZE+1)]
 
-            # 4. DESCARGA EN PARALELO (Punto 2)
-            # max_workers=10 es un buen equilibrio para una Raspberry Pi
             with ThreadPoolExecutor(max_workers=10) as executor:
-                # Disparamos las descargas
-                future_results = [executor.submit(fetch_tile, tx, ty) for tx, ty in tiles_to_download]
-                
-                for future in future_results:
-                    tx, ty, tile_img = future.result()
-                    if tile_img:
-                        # Pegamos el tile en la posición correcta del lienzo
-                        paste_x = (tx * TILE_SIZE) - x_start
-                        paste_y = (ty * TILE_SIZE) - y_start
-                        lienzo.paste(tile_img, (paste_x, paste_y), tile_img)
+                futures = [executor.submit(fetch_tile, tx, ty) for tx, ty in tiles_req]
+                for f in futures:
+                    tx, ty, img = f.result()
+                    if img: lienzo.paste(img, ((tx*TILE_SIZE)-x_start, (ty*TILE_SIZE)-y_start), img)
 
-            # 5. COMPARACIÓN DE CAMBIOS (MD5 sobre bytes puros)
             current_hash = hashlib.md5(lienzo.tobytes()).hexdigest()
 
-            if current_hash == state.get("last_hash"):
-                print(f"[{datetime.now().strftime('%H:%M:%S')}] Sin cambios en el área. Omitiendo guardado.")
-            else:
+            if current_hash != state.get("last_hash"):
+                # --- LÓGICA CENTINELA ---
+                if state["sentry_mode"] and last_image_obj:
+                    percent = calculate_change_percentage(last_image_obj, lienzo)
+                    if percent >= state["alert_threshold"]:
+                        msg = (f"⚔️ <b>ATAQUE DETECTADO</b>\n"
+                               f"Cambio masivo: <b>{percent:.2f}%</b> del lienzo.\n"
+                               f"Umbral: {state['alert_threshold']}%\n"
+                               f"Hora: {datetime.now().strftime('%H:%M:%S')}")
+                        send_telegram(msg, warning=True)
+                        print(f"!!! ALERTA: Cambio del {percent:.2f}%")
+                
+                # Guardar imagen
                 if not os.path.exists(STORAGE_DIR): os.makedirs(STORAGE_DIR)
                 ts = datetime.now().strftime("%Y%m%d_%H%M%S")
                 fname = os.path.join(STORAGE_DIR, f"cap_{ts}.png")
@@ -137,75 +158,67 @@ def worker_timelapse():
                 meta.add_text("WPlace_Source", c.get("raw_text", ""))
                 lienzo.save(fname, pnginfo=meta)
                 
-                # Persistimos el hash para el siguiente ciclo o reinicio
                 state["last_hash"] = current_hash 
+                last_image_obj = lienzo.copy() # Actualizamos referencia visual
                 save_state_to_disk() 
-                print(f"✅ [NUEVO] ¡Cambio detectado! Guardado: {fname}")
+                print(f"✅ Cambio guardado: {fname}")
+            else:
+                print("Sin cambios.")
             
         except Exception as e:
-            print(f"!!! [ERROR CRÍTICO] En el loop de captura: {e}")
+            print(f"Error: {e}")
+            send_telegram(f"⚠️ <b>Error en Worker:</b> {str(e)}")
 
-        # 6. Espera del intervalo con interrupción rápida
-        interval_sec = int(state.get("interval", 1) * 60)
-        for _ in range(interval_sec):
+        for _ in range(int(state["interval"] * 60)):
             if not state["running"]: break
             time.sleep(1)
 
 def start_thread():
-    h = threading.Thread(target=worker_timelapse)
-    h.daemon = True
-    h.start()
+    threading.Thread(target=worker_timelapse, daemon=True).start()
 
-# --- ENDPOINTS ---
-
+# --- RUTAS ---
 @app.route('/start_task', methods=['POST'])
 def start():
     data = request.json
-    if state["running"]: return jsonify({"status": "error", "message": "Ya corre una tarea"}), 400
-    
-    state["coords"] = data["coords"]
-    state["interval"] = int(data["interval_min"])
-    state["limit_mb"] = int(data["limit_mb"])
-    state["duration_hours"] = float(data.get("duration_hours", 24))
-    state["running"] = True
-    state["start_time"] = datetime.now().isoformat()
-    
-    save_state_to_disk() # Persistencia
+    state.update({
+        "coords": data.get("coords"),
+        "interval": float(data.get("interval", 30)),
+        "duration_hours": float(data.get("duration_hours", 24)),
+        "telegram_token": data.get("tg_token", ""),
+        "telegram_chat_id": data.get("tg_chat", ""),
+        "alert_threshold": float(data.get("alert_pct", 5.0)),
+        "sentry_mode": data.get("sentry", False),
+        "running": True,
+        "start_time": datetime.now().isoformat(),
+        "last_hash": None
+    })
+    save_state_to_disk()
     start_thread()
-    return jsonify({"status": "ok", "message": "Tarea iniciada y persistida"})
+    return jsonify({"status": "ok"})
 
 @app.route('/stop_task', methods=['POST'])
 def stop():
     state["running"] = False
     save_state_to_disk()
-    return jsonify({"status": "ok", "message": "Deteniendo tarea..."})
-
-@app.route('/clear_data', methods=['POST'])
-def clear():
-    if state["running"]: return jsonify({"status": "error", "message": "Detén la tarea antes de borrar"}), 400
-    try:
-        if os.path.exists(STORAGE_DIR):
-            shutil.rmtree(STORAGE_DIR)
-            os.makedirs(STORAGE_DIR)
-        return jsonify({"status": "ok", "message": "Datos eliminados"})
-    except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
-
-@app.route('/download_zip', methods=['GET'])
-def download():
-    shutil.make_archive('timelapse_pack', 'zip', STORAGE_DIR)
-    return send_file('timelapse_pack.zip', as_attachment=True)
+    send_telegram("⏹ <b>Tarea Detenida Manualmente</b>")
+    return jsonify({"status": "ok"})
 
 @app.route('/status', methods=['GET'])
 def get_status():
-    count = len(os.listdir(STORAGE_DIR)) if os.path.exists(STORAGE_DIR) else 0
-    return jsonify({
-        "running": state["running"],
-        "files_count": count,
-        "start_time": state["start_time"]
-    })
+    c = len(os.listdir(STORAGE_DIR)) if os.path.exists(STORAGE_DIR) else 0
+    return jsonify({"running": state["running"], "captures": c, "start_time": state["start_time"], "duration_hours": state["duration_hours"]})
 
-load_state_from_disk() # Cargar estado al iniciar script
+@app.route('/download_zip', methods=['GET'])
+def download():
+    shutil.make_archive('pack', 'zip', STORAGE_DIR)
+    return send_file('pack.zip', as_attachment=True)
+
+@app.route('/clear_data', methods=['POST'])
+def clear():
+    if os.path.exists(STORAGE_DIR): shutil.rmtree(STORAGE_DIR)
+    return jsonify({"status": "ok"})
 
 if __name__ == '__main__':
+    if not os.path.exists(STORAGE_DIR): os.makedirs(STORAGE_DIR)
+    load_state_from_disk()
     app.run(host='0.0.0.0', port=5000)
