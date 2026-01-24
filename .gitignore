@@ -1,0 +1,21 @@
+# Archivos compilados de Python
+__pycache__/
+*.pyc
+
+# Carpetas de datos (NO subir imágenes pesadas)
+timelapse_data/
+wplace_capturas_local/
+
+# Archivos de estado y configuración local
+wplace_state.json
+client_config.json
+*.log
+
+# Entornos virtuales (si usas venv)
+venv/
+env/
+.env
+
+# Sistema operativo
+.DS_Store
+Thumbs.db
