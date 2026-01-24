@@ -131,20 +131,35 @@ class WPlaceClient:
         tab_task = tk.Frame(self.notebook)
         self.notebook.add(tab_task, text="🎮 Tareas")
         
-        frm_modes = tk.LabelFrame(tab_task, text=" Modos ", padx=10, pady=10)
-        frm_modes.pack(fill="x", padx=10, pady=10)
-        tk.Checkbutton(frm_modes, text="📷 TIMELAPSE", variable=self.mode_timelapse, font=("bold")).pack(side="left", expand=True)
-        tk.Checkbutton(frm_modes, text="🛡️ CENTINELA", variable=self.mode_sentry, font=("bold")).pack(side="left", expand=True)
+        frm_modes = tk.LabelFrame(tab_task, text=" Modos Activos ", padx=10, pady=5)
+        frm_modes.pack(fill="x", padx=10, pady=5)
+        tk.Checkbutton(frm_modes, text="📷 TIMELAPSE", variable=self.mode_timelapse).pack(side="left", expand=True)
+        tk.Checkbutton(frm_modes, text="🛡️ CENTINELA", variable=self.mode_sentry).pack(side="left", expand=True)
 
-        frm_cyc = tk.LabelFrame(tab_task, text=" Configuración ", padx=10, pady=10)
-        frm_cyc.pack(fill="x", padx=10, pady=10)
-        f_int = tk.Frame(frm_cyc); f_int.pack(fill="x", pady=5)
-        tk.Label(f_int, text="Ciclo (min):").pack(side="left")
-        tk.Spinbox(f_int, from_=1, to=1440, width=8, textvariable=self.cycle_interval).pack(side="left", padx=5)
+        frm_conf = tk.LabelFrame(tab_task, text=" Parámetros de Tarea ", padx=10, pady=5)
+        frm_conf.pack(fill="x", padx=10, pady=5)
         
-        tk.Label(frm_cyc, text="Sensibilidad Centinela (%):").pack(anchor="w", pady=(10,0))
-        tk.Scale(frm_cyc, from_=0.1, to=50.0, orient="horizontal", variable=self.alert_threshold).pack(fill="x", pady=5)
+        # Fila 1: Intervalo
+        f1 = tk.Frame(frm_conf); f1.pack(fill="x", pady=2)
+        tk.Label(f1, text="Ciclo / Intervalo (min):").pack(side="left")
+        tk.Spinbox(f1, from_=1, to=1440, width=5, textvariable=self.cycle_interval).pack(side="left", padx=5)
 
+        # Fila 2: Duración
+        f2 = tk.Frame(frm_conf); f2.pack(fill="x", pady=2)
+        tk.Label(f2, text="Duración Tarea:").pack(side="left")
+        tk.Spinbox(f2, from_=1, to=1000, width=5, textvariable=self.duration_val).pack(side="left", padx=5)
+        ttk.Combobox(f2, values=["Horas", "Minutos"], width=8, state="readonly", textvariable=self.duration_unit).pack(side="left")
+
+        # Fila 3: MB
+        f3 = tk.Frame(frm_conf); f3.pack(fill="x", pady=2)
+        tk.Label(f3, text="Límite Espacio (MB):").pack(side="left")
+        tk.Spinbox(f3, from_=100, to=10000, width=8, textvariable=self.limit_mb).pack(side="left", padx=5)
+
+        # Fila 4: Sensibilidad
+        f4 = tk.Frame(frm_conf); f4.pack(fill="x", pady=5)
+        tk.Label(f4, text="Sensibilidad Centinela (%):").pack(side="left")
+        tk.Scale(f4, from_=0.1, to=50.0, orient="horizontal", variable=self.alert_threshold).pack(side="left", fill="x", expand=True, padx=5)
+        
         # Tab Telegram
         tab_tg = tk.Frame(self.notebook)
         self.notebook.add(tab_tg, text="🔔 Telegram")
@@ -156,10 +171,11 @@ class WPlaceClient:
         # Tab Gestión
         tab_man = tk.Frame(self.notebook)
         self.notebook.add(tab_man, text="📂 Gestión")
-        tk.Button(tab_man, text="📥 Bajar ZIP de Fotos", command=self.descargar_zip, bg="#2196F3", fg="white", height=2).pack(fill="x", padx=20, pady=10)
-        tk.Button(tab_man, text="🕵️ Inspeccionar y Copiar Coordenadas", command=self.inspeccionar_png, height=2).pack(fill="x", padx=20, pady=10)
+        tk.Button(tab_man, text="📥 Bajar ZIP de Raspberry", command=self.descargar_zip, bg="#2196F3", fg="white", height=2).pack(fill="x", padx=20, pady=5)
+        tk.Button(tab_man, text="💾 Guardar Captura Local (PC)", command=self.guardar_local, bg="#4CAF50", fg="white", height=2).pack(fill="x", padx=20, pady=5)
+        tk.Button(tab_man, text="🕵️ Inspeccionar PNG", command=self.inspeccionar_png, height=2).pack(fill="x", padx=20, pady=5)
         tk.Button(tab_man, text="🗑 Vaciar Servidor", command=self.vaciar_server, bg="#FF9800", fg="white").pack(fill="x", padx=20, pady=10)
-
+        
         # BOTONES FINALES
         frm_final = tk.Frame(container, pady=20)
         frm_final.pack(fill="x")
