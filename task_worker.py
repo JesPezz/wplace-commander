@@ -13,19 +13,21 @@ class TaskWorker:
         # Estado
         self.running = False
         self.paused = False
-        self.status = "stopped"  # stopped, running, paused, error
+        self.status = "stopped"
         self.start_time_ts = None
         self.captures_count = 0
-        self.last_img = None  # Centinela RAM
-        self.last_saved_img = None # Timelapse RAM
-        self.last_saved_path = None # Persistencia
+        self.last_img = None
+        self.last_saved_img = None
+        self.last_saved_path = None
         self.current_diff = 0.0
-
-        # Cargar persistencia específica de esta tarea
+        
         self.load_persistence()
 
     def log(self, msg):
-        print(f"[{datetime.now().strftime('%H:%M:%S')}] [Task {self.id}] {msg}", flush=True)
+        # LOGS DETALLADOS: [Hora] [ID] [Modo] Mensaje
+        modos = "T" if self.config.get('save_timelapse') else ""
+        modos += "S" if self.config.get('sentry') else ""
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] [T{self.id}|{modos}] {msg}", flush=True)
 
     def get_persistence_file(self):
         return f"task_{self.id}_state.json"
@@ -37,10 +39,8 @@ class TaskWorker:
                 "start_timestamp": self.start_time_ts,
                 "last_saved_path": self.last_saved_path
             }
-            with open(self.get_persistence_file(), "w") as f:
-                json.dump(state, f)
-        except Exception as e:
-            self.log(f"Error guardando estado: {e}")
+            with open(self.get_persistence_file(), "w") as f: json.dump(state, f)
+        except Exception as e: self.log(f"Error Persistencia: {e}")
 
     def load_persistence(self):
         f = self.get_persistence_file()
@@ -50,27 +50,39 @@ class TaskWorker:
                     state = json.load(file)
                     self.captures_count = state.get("captures_count", 0)
                     self.start_time_ts = state.get("start_timestamp")
-                    
-                    # Recuperar Memoria Visual
                     path = state.get("last_saved_path")
                     if path and os.path.exists(path):
                         self.last_saved_img = Image.open(path).convert("RGBA")
                         self.last_saved_path = path
-                        self.log(f"Memoria visual recuperada: {path}")
-            except Exception as e:
-                self.log(f"Error cargando persistencia: {e}")
+                        self.log(f"Memoria visual cargada: {path}")
+            except: pass
 
-    def send_telegram(self, msg, img_path=None):
+    def send_telegram(self, title, details, img_path=None):
         token = self.config.get("tg_token")
         chat_id = self.config.get("tg_chat")
         if not token or not chat_id: return
+        
+        # INFO RICA EN TELEGRAM
+        start_str = datetime.fromtimestamp(self.start_time_ts).strftime('%H:%M') if self.start_time_ts else "--:--"
+        modos = []
+        if self.config.get('save_timelapse'): modos.append("📷 Timelapse")
+        if self.config.get('sentry'): modos.append("🛡️ Centinela")
+        
+        caption = (
+            f"🤖 *Tarea {self.id}: {self.config.get('name')}*\n"
+            f"{title}\n\n"
+            f"⚙️ *Modos:* {' + '.join(modos)}\n"
+            f"🕒 *Inicio:* {start_str}\n"
+            f"📦 *Capturas:* {self.captures_count}\n"
+            f"{details}"
+        )
+        
         try:
-            method = "sendDocument" if img_path else "sendMessage"
-            url = f"https://api.telegram.org/bot{token}/{method}"
-            data = {'chat_id': chat_id, 'caption' if img_path else 'text': f"🤖 *Tarea {self.id}*\n{msg}", 'parse_mode': 'Markdown'}
+            url = f"https://api.telegram.org/bot{token}/{'sendDocument' if img_path else 'sendMessage'}"
+            data = {'chat_id': chat_id, 'caption' if img_path else 'text': caption, 'parse_mode': 'Markdown'}
             files = {'document': open(img_path, 'rb')} if img_path else None
             requests.post(url, data=data, files=files, timeout=10)
-        except: pass
+        except Exception as e: self.log(f"Error TG: {e}")
 
     def calculate_diff(self, img1, img2):
         if img1.size != img2.size: return 100.0
@@ -97,88 +109,80 @@ class TaskWorker:
         self.status = "running"
         if not self.start_time_ts: self.start_time_ts = time.time()
         
-        self.log("Iniciada.")
-        self.send_telegram("🚀 Tarea iniciada.")
+        self.log("INICIANDO LOOP")
+        self.send_telegram("🚀 *Iniciada*", "El sistema está monitoreando el objetivo.")
 
         while self.running:
             if self.paused:
-                self.status = "paused"
-                time.sleep(1)
-                continue
+                self.status = "paused"; time.sleep(1); continue
             
-            self.status = "running"
-            
-            # Control de Tiempo
-            duracion = float(self.config.get('duration_hours', 0))
-            if duracion > 0:
-                elapsed = (time.time() - self.start_time_ts) / 3600
-                if elapsed >= duracion:
-                    self.stop()
-                    self.send_telegram("🏁 Finalizada por tiempo.")
-                    break
+            # Limite Tiempo
+            dur = float(self.config.get('duration_hours', 0))
+            if dur > 0 and (time.time() - self.start_time_ts)/3600 >= dur:
+                self.stop(); self.send_telegram("🏁 *Finalizada*", "Tiempo cumplido."); break
 
             try:
-                current_img = self.download_area()
+                # Limite MB
+                limit_mb = float(self.config.get('limit_mb', 1000))
+                current_mb = sum(os.path.getsize(os.path.join(self.data_dir, f)) for f in os.listdir(self.data_dir)) / (1024*1024)
+                if current_mb > limit_mb:
+                     self.stop(); self.send_telegram("🛑 *Detenida*", "Límite de almacenamiento excedido."); break
 
-                # Lógica Centinela
+                self.log("Descargando...")
+                current = self.download_area()
+
+                # CENTINELA
                 if self.config.get('sentry'):
-                    if self.last_img is None:
-                        self.last_img = current_img.copy()
+                    sensibilidad = float(self.config.get('alert_pct', 5.0))
+                    if self.last_img is None: self.last_img = current.copy()
                     else:
-                        diff = self.calculate_diff(self.last_img, current_img)
+                        diff = self.calculate_diff(self.last_img, current)
                         self.current_diff = diff
-                        if diff >= self.config.get('alert_pct', 5.0):
-                            ts = datetime.now().strftime("%H%M%S")
-                            path = os.path.join(self.sentry_dir, f"alert_{self.id}_{ts}.png")
-                            current_img.save(path, "PNG")
-                            self.send_telegram(f"⚠️ *¡ATAQUE!* Dif: `{diff:.2f}%`", path)
-                            self.last_img = current_img.copy()
+                        if diff >= sensibilidad:
+                            path = os.path.join(self.sentry_dir, f"alert_{self.id}.png")
+                            current.save(path, "PNG")
+                            self.send_telegram("⚠️ *¡ATAQUE DETECTADO!*", f"📉 Variación: `{diff:.2f}%` (Umbral: {sensibilidad}%)", path)
+                            self.last_img = current.copy()
+                            self.log(f"ALERTA enviada. Dif: {diff}%")
 
-                # Lógica Timelapse
+                # TIMELAPSE
                 if self.config.get('save_timelapse'):
                     should_save = False
-                    if self.last_saved_img is None:
-                        should_save = True
+                    if self.last_saved_img is None: should_save = True
                     else:
-                        diff_t = self.calculate_diff(self.last_saved_img, current_img)
-                        if diff_t > 0.0001: should_save = True
-                    
+                        d_t = self.calculate_diff(self.last_saved_img, current)
+                        if d_t > 0.0001: should_save = True
+                        else: self.log("Sin cambios visuales.")
+
                     if should_save:
                         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
                         path = os.path.join(self.data_dir, f"cap_{self.id}_{ts}.png")
-                        current_img.save(path, "PNG")
-                        self.last_saved_img = current_img.copy()
+                        current.save(path, "PNG")
+                        self.last_saved_img = current.copy()
                         self.last_saved_path = path
                         self.captures_count += 1
                         self.save_persistence()
-                        self.log(f"Foto guardada: {path}")
+                        self.log(f"Guardado: {path}")
 
-            except Exception as e:
-                self.log(f"Error: {e}")
-                self.status = "error"
+            except Exception as e: self.log(f"Error Crítico: {e}"); self.status = "error"
 
             time.sleep(self.config.get('interval', 1) * 60)
 
-    def start(self):
-        threading.Thread(target=self.run_loop, daemon=True).start()
-
-    def stop(self):
-        self.running = False
-        self.status = "stopped"
-        self.save_persistence()
-
+    def start(self): threading.Thread(target=self.run_loop, daemon=True).start()
+    def stop(self): self.running = False; self.status = "stopped"; self.save_persistence()
+    
     def get_info(self):
         dur = float(self.config.get('duration_hours', 0))
-        restante = "Inf"
-        if dur > 0 and self.start_time_ts:
-            elapsed = (time.time() - self.start_time_ts) / 3600
-            restante = f"{max(0, dur - elapsed):.2f}h"
-
+        rest = "Inf"
+        if dur > 0 and self.start_time_ts: rest = f"{max(0, dur - (time.time()-self.start_time_ts)/3600):.2f}h"
+        
+        # Modo String
+        m = []
+        if self.config.get('save_timelapse'): m.append("T")
+        if self.config.get('sentry'): m.append("S")
+        
         return {
-            "id": self.id,
-            "name": self.config.get("name", "Area"),
-            "status": self.status,
-            "captures": self.captures_count,
-            "restante": restante,
-            "diff_actual": f"{self.current_diff:.4f}%"
+            "id": self.id, "name": self.config.get("name"), "mode": "+".join(m),
+            "status": self.status, "captures": self.captures_count,
+            "restante": rest, "diff_actual": f"{self.current_diff:.4f}%"
         }

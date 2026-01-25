@@ -1,390 +1,400 @@
 import tkinter as tk
-from tkinter import messagebox, ttk, simpledialog, filedialog
-from PIL import Image, ImageTk, ImageOps, ImageDraw
-from PIL.PngImagePlugin import PngInfo
+from tkinter import messagebox, ttk, simpledialog, Menu
+from PIL import Image, ImageTk, ImageDraw
 import requests
 from io import BytesIO
 import threading
-import re
-import os
+import time
 import json
+import os
+import subprocess
+import platform
+import re
 from datetime import datetime
 
 # ================= CONFIGURACIÓN =================
-TILE_SIZE = 1000
-BASE_URL = "https://backend.wplace.live/files/s0/tiles"
-OUTPUT_FOLDER = "wplace_capturas_local"
 CONFIG_FILE = "client_config.json"
+OUTPUT_FOLDER = "wplace_downloads"
+TILE_SERVER = "https://backend.wplace.live/files/s0/tiles"
 
 class WPlaceClient:
     def __init__(self, root):
         self.root = root
-        self.root.title("WPlace Commander v13.1 (Centered)")
+        self.root.title("WPlace Commander v16.0 (Ultimate)")
+        self.root.geometry("1200x800")
         
-        if os.path.exists("wplace_icon.ico"):
-            try: self.root.iconbitmap("wplace_icon.ico")
-            except: pass
-            
-        self.root.geometry("800x950")
-        self.root.minsize(750, 600)
+        style = ttk.Style()
+        style.theme_use('clam')
+        style.configure("Treeview", rowheight=25, font=('Segoe UI', 9))
+        style.configure("Treeview.Heading", font=('Segoe UI', 10, 'bold'))
+        style.configure("TButton", font=('Segoe UI', 9))
+        style.configure("Accent.TButton", font=('Segoe UI', 10, 'bold'), background="#2196F3", foreground="white")
+        style.configure("Danger.TButton", font=('Segoe UI', 9, 'bold'), background="#F44336", foreground="white")
+        style.configure("Warning.TButton", font=('Segoe UI', 9, 'bold'), background="#FF9800", foreground="white")
         
         self.config = self.cargar_config()
-
-        # Variables
         self.server_ip = tk.StringVar(value=self.config.get("server_ip", "http://192.168.1.107:5000"))
-        self.tg_token = tk.StringVar(value=self.config.get("tg_token", ""))
-        self.tg_chat = tk.StringVar(value=self.config.get("tg_chat", ""))
-        self.mode_timelapse = tk.BooleanVar(value=self.config.get("mode_timelapse", True))
-        self.mode_sentry = tk.BooleanVar(value=self.config.get("mode_sentry", False))
-        self.cycle_interval = tk.StringVar(value=self.config.get("last_interval", "30"))
-        self.duration_val = tk.StringVar(value=self.config.get("last_duration", "24"))
-        self.duration_unit = tk.StringVar(value="Horas")
-        self.limit_mb = tk.StringVar(value=self.config.get("last_limit", "1000"))
-        self.alert_threshold = tk.DoubleVar(value=self.config.get("alert_threshold", 5.0))
-
-        self.current_image = None
-        self.last_parsed_coords = None 
-        self.last_raw_text = ""
-
-        self.setup_ui()
-        self.actualizar_estado_remoto()
-
-    def setup_ui(self):
-        # --- ESTRUCTURA DE SCROLL CENTRADA ---
-        self.main_canvas = tk.Canvas(self.root, highlightthickness=0)
-        self.scrollbar = ttk.Scrollbar(self.root, orient="vertical", command=self.main_canvas.yview)
         
-        # Este frame contendrá todo
-        self.scrollable_frame = ttk.Frame(self.main_canvas)
-
-        # Configurar para que el frame interno use todo el ancho del canvas
-        self.canvas_window = self.main_canvas.create_window((400, 0), window=self.scrollable_frame, anchor="n")
-
-        self.scrollable_frame.bind("<Configure>", self._on_frame_configure)
-        self.main_canvas.bind("<Configure>", self._on_canvas_configure)
-        self.main_canvas.configure(yscrollcommand=self.scrollbar.set)
-
-        self.scrollbar.pack(side="right", fill="y")
-        self.main_canvas.pack(side="left", fill="both", expand=True)
-
-        # Soporte para rueda del ratón
-        self.root.bind_all("<MouseWheel>", lambda e: self.main_canvas.yview_scroll(int(-1*(e.delta/120)), "units"))
-
-        # --- CONTENIDO CENTRADO ---
-        container = ttk.Frame(self.scrollable_frame)
-        container.pack(fill="x", expand=True, padx=20, pady=10)
-
-        # 1. MONITOR
-        status_frame = tk.LabelFrame(container, text=" Estado del Servidor ", padx=10, pady=5)
-        status_frame.pack(fill="x", pady=10)
+        # Estado Visual
+        self.click_count = 0
+        self.preview_image_raw = None # Imagen PIL original
+        self.tk_image_ref = None
+        self.zoom_level = 1.0
         
-        frm_mon = tk.Frame(status_frame)
-        frm_mon.pack(fill="x")
-        self.led_canvas = tk.Canvas(frm_mon, width=25, height=25, highlightthickness=0)
-        self.led_canvas.pack(side="left")
-        self.led_circle = self.led_canvas.create_oval(5, 5, 20, 20, fill="gray")
-        self.status_label = tk.Label(frm_mon, text="Conectando...", font=("Arial", 9, "bold"), fg="#555")
-        self.status_label.pack(side="left", padx=5)
-        self.captures_label = tk.Label(frm_mon, text="Fotos: 0", font=("Arial", 8))
-        self.captures_label.pack(side="right", padx=5)
-        self.progress_bar = ttk.Progressbar(status_frame, orient="horizontal", mode="determinate")
-        self.progress_bar.pack(fill="x", pady=5)
-
-        # 2. OBJETIVO
-        frm_glob = tk.LabelFrame(container, text=" Configuración de Objetivo ", padx=15, pady=10)
-        frm_glob.pack(fill="x", pady=10)
+        self.notebook = ttk.Notebook(root)
+        self.notebook.pack(fill='both', expand=True, padx=5, pady=5)
         
-        f_url = tk.Frame(frm_glob); f_url.pack(fill="x", pady=5)
-        tk.Label(f_url, text="URL RPi:").pack(side="left")
-        tk.Entry(f_url, textvariable=self.server_ip, bg="#FAFAFA").pack(side="left", fill="x", expand=True, padx=5)
-        tk.Button(f_url, text="💾", command=self.guardar_config, width=5).pack(side="left")
-
-        f_fav = tk.Frame(frm_glob); f_fav.pack(fill="x", pady=5)
-        tk.Label(f_fav, text="Favoritos:").pack(side="left")
-        self.combo_favs = ttk.Combobox(f_fav, state="readonly")
-        self.combo_favs.pack(side="left", padx=5, fill="x", expand=True)
-        self.combo_favs.bind("<<ComboboxSelected>>", self.cargar_favorito)
-        self.actualizar_combo_favs()
-        tk.Button(f_fav, text="+", command=self.guardar_favorito_dialog, width=3).pack(side="left", padx=1)
-        tk.Button(f_fav, text="-", command=self.borrar_favorito, width=3).pack(side="left", padx=1)
-
-        tk.Label(frm_glob, text="A (Inicio):", font=("Arial", 8, "bold")).pack(anchor="w", padx=2)
-        self.entry_p1 = tk.Entry(frm_glob, bg="#F0F8FF"); self.entry_p1.pack(fill="x", pady=2)
-        self.entry_p1.bind("<Double-Button-1>", self.pegar_portapapeles)
-
-        tk.Label(frm_glob, text="B (Fin):", font=("Arial", 8, "bold")).pack(anchor="w", padx=2)
-        self.entry_p2 = tk.Entry(frm_glob, bg="#F0F8FF"); self.entry_p2.pack(fill="x", pady=2)
-        self.entry_p2.bind("<Double-Button-1>", self.pegar_portapapeles)
-
-        # 3. VISTA PREVIA
-        tk.Button(container, text="🔍 Generar Vista Previa", command=self.iniciar_preview, bg="#E0E0E0", font=("bold")).pack(pady=10, fill="x")
-        self.preview_container = tk.Frame(container, bg="#DCDCDC", relief="sunken", bd=1)
-        self.preview_container.pack(pady=5)
-        self.lbl_preview = tk.Label(self.preview_container, text="Esperando Coordenadas...", bg="#DCDCDC", padx=10, pady=10)
-        self.lbl_preview.pack()
-
-        # 4. PESTAÑAS
-        self.notebook = ttk.Notebook(container)
-        self.notebook.pack(fill="x", pady=15)
-
-        # Tab Tareas
-        tab_task = tk.Frame(self.notebook)
-        self.notebook.add(tab_task, text="🎮 Tareas")
+        self.tab_new = ttk.Frame(self.notebook)
+        self.tab_manager = ttk.Frame(self.notebook)
+        self.tab_system = ttk.Frame(self.notebook)
         
-        frm_modes = tk.LabelFrame(tab_task, text=" Modos Activos ", padx=10, pady=5)
-        frm_modes.pack(fill="x", padx=10, pady=5)
-        tk.Checkbutton(frm_modes, text="📷 TIMELAPSE", variable=self.mode_timelapse).pack(side="left", expand=True)
-        tk.Checkbutton(frm_modes, text="🛡️ CENTINELA", variable=self.mode_sentry).pack(side="left", expand=True)
-
-        frm_conf = tk.LabelFrame(tab_task, text=" Parámetros de Tarea ", padx=10, pady=5)
-        frm_conf.pack(fill="x", padx=10, pady=5)
+        self.notebook.add(self.tab_new, text="🔭 Misión")
+        self.notebook.add(self.tab_manager, text="📋 Radar")
+        self.notebook.add(self.tab_system, text="⚙️ Sistema")
         
-        # Fila 1: Intervalo
-        f1 = tk.Frame(frm_conf); f1.pack(fill="x", pady=2)
-        tk.Label(f1, text="Ciclo / Intervalo (min):").pack(side="left")
-        tk.Spinbox(f1, from_=1, to=1440, width=5, textvariable=self.cycle_interval).pack(side="left", padx=5)
-
-        # Fila 2: Duración
-        f2 = tk.Frame(frm_conf); f2.pack(fill="x", pady=2)
-        tk.Label(f2, text="Duración Tarea:").pack(side="left")
-        tk.Spinbox(f2, from_=1, to=1000, width=5, textvariable=self.duration_val).pack(side="left", padx=5)
-        ttk.Combobox(f2, values=["Horas", "Minutos"], width=8, state="readonly", textvariable=self.duration_unit).pack(side="left")
-
-        # Fila 3: MB
-        f3 = tk.Frame(frm_conf); f3.pack(fill="x", pady=2)
-        tk.Label(f3, text="Límite Espacio (MB):").pack(side="left")
-        tk.Spinbox(f3, from_=100, to=10000, width=8, textvariable=self.limit_mb).pack(side="left", padx=5)
-
-        # Fila 4: Sensibilidad
-        f4 = tk.Frame(frm_conf); f4.pack(fill="x", pady=5)
-        tk.Label(f4, text="Sensibilidad Centinela (%):").pack(side="left")
-        tk.Scale(f4, from_=0.1, to=50.0, orient="horizontal", variable=self.alert_threshold).pack(side="left", fill="x", expand=True, padx=5)
+        self.setup_tab_new()
+        self.setup_tab_manager()
+        self.setup_tab_system()
         
-        # Tab Telegram
-        tab_tg = tk.Frame(self.notebook)
-        self.notebook.add(tab_tg, text="🔔 Telegram")
-        tk.Label(tab_tg, text="Bot Token:").pack(anchor="w", padx=20, pady=(10,0))
-        tk.Entry(tab_tg, textvariable=self.tg_token).pack(fill="x", padx=20, pady=5)
-        tk.Label(tab_tg, text="Chat ID:").pack(anchor="w", padx=20, pady=(10,0))
-        tk.Entry(tab_tg, textvariable=self.tg_chat).pack(fill="x", padx=20, pady=5)
-
-        # Tab Gestión
-        tab_man = tk.Frame(self.notebook)
-        self.notebook.add(tab_man, text="📂 Gestión")
-        tk.Button(tab_man, text="📥 Bajar ZIP de Raspberry", command=self.descargar_zip, bg="#2196F3", fg="white", height=2).pack(fill="x", padx=20, pady=5)
-        tk.Button(tab_man, text="💾 Guardar Captura Local (PC)", command=self.guardar_local, bg="#4CAF50", fg="white", height=2).pack(fill="x", padx=20, pady=5)
-        tk.Button(tab_man, text="🕵️ Inspeccionar PNG", command=self.inspeccionar_png, height=2).pack(fill="x", padx=20, pady=5)
-        tk.Button(tab_man, text="🗑 Vaciar Servidor", command=self.vaciar_server, bg="#FF9800", fg="white").pack(fill="x", padx=20, pady=10)
-        
-        # BOTONES FINALES
-        frm_final = tk.Frame(container, pady=20)
-        frm_final.pack(fill="x")
-        tk.Button(frm_final, text="▶ EJECUTAR TAREA", command=self.enviar_orden_rpi, bg="#4CAF50", fg="white", font=("Arial", 12, "bold"), width=25, height=2).pack(pady=5)
-        tk.Button(frm_final, text="⏹ DETENER TODO", command=self.detener_rpi, bg="#F44336", fg="white", font=("Arial", 10, "bold"), width=25).pack(pady=5)
-
-    # --- MÉTODOS DE AJUSTE DE CANVAS ---
-    def _on_frame_configure(self, event):
-        self.main_canvas.configure(scrollregion=self.main_canvas.bbox("all"))
-
-    def _on_canvas_configure(self, event):
-        canvas_width = event.width
-        # Reposicionar la ventana del frame al centro del canvas
-        self.main_canvas.itemconfig(self.canvas_window, width=canvas_width)
-        self.main_canvas.coords(self.canvas_window, canvas_width/2, 0)
-
-    # --- LÓGICA ---
-    def crear_fondo_ajedrez(self, w, h, celda=15):
-        bg = Image.new("RGBA", (w, h), (220, 220, 220, 255))
-        d = ImageDraw.Draw(bg)
-        for y in range(0, h, celda):
-            for x in range(0, w, celda):
-                if (x//celda + y//celda) % 2 == 0:
-                    d.rectangle([x,y,x+celda,y+celda], fill=(255,255,255,255))
-        return bg
-
-    def iniciar_preview(self):
-        self.lbl_preview.config(text="Cargando...", image="")
-        threading.Thread(target=self._worker_imagen, daemon=True).start()
-
-    def _worker_imagen(self):
-        try:
-            t1, t2 = self.entry_p1.get(), self.entry_p2.get()
-            def parse(t):
-                m = re.search(r"Tl X:\s*(\d+).*Tl Y:\s*(\d+).*Px X:\s*(\d+).*Px Y:\s*(\d+)", t)
-                return [int(x) for x in m.groups()] if m else None
-            c1, c2 = parse(t1), parse(t2)
-            if not c1 or not c2: return
-            gx1, gy1 = (c1[0]*1000)+c1[2], (c1[1]*1000)+c1[3]
-            gx2, gy2 = (c2[0]*1000)+c2[2], (c2[1]*1000)+c2[3]
-            xs, xe, ys, ye = min(gx1,gx2), max(gx1,gx2), min(gy1,gy2), max(gy1,gy2)
-            self.last_parsed_coords = {"x_start": xs, "x_end": xe, "y_start": ys, "y_end": ye, "raw_text": t1}
-            self.last_raw_text = t1 
-            w, h = xe-xs, ye-ys
-            lienzo = Image.new("RGBA", (w, h), (0,0,0,0))
-            tx_s, tx_e = xs//1000, (xe-1)//1000
-            ty_s, ty_e = ys//1000, (ye-1)//1000
-            for tx in range(tx_s, tx_e+1):
-                for ty in range(ty_s, ty_e+1):
-                    try:
-                        r = requests.get(f"{BASE_URL}/{tx}/{ty}.png", timeout=5)
-                        if r.status_code==200:
-                            tile = Image.open(BytesIO(r.content)).convert("RGBA")
-                            lienzo.paste(tile, ((tx*1000)-xs, (ty*1000)-ys), tile)
-                    except: pass
-            self.current_image = lienzo
-            MAX_SCREEN_W, MAX_SCREEN_H = 650, 450
-            if w > MAX_SCREEN_W or h > MAX_SCREEN_H:
-                ratio = min(MAX_SCREEN_W/w, MAX_SCREEN_H/h)
-                new_w, new_h = int(w*ratio), int(h*ratio)
-                thumb = lienzo.resize((new_w, new_h), Image.Resampling.LANCZOS)
-            else:
-                new_w, new_h = w, h
-                thumb = lienzo.copy()
-            fondo = self.crear_fondo_ajedrez(new_w, new_h)
-            final = Image.alpha_composite(fondo, thumb)
-            self.root.after(0, lambda: self._mostrar_imagen(final))
-        except Exception as e:
-             self.root.after(0, lambda: messagebox.showerror("Error", str(e)))
-
-    def _mostrar_imagen(self, img):
-        self.tk_img = ImageTk.PhotoImage(img)
-        self.lbl_preview.config(image=self.tk_img, text="")
-
-    def enviar_orden_rpi(self):
-        if not self.last_parsed_coords:
-            messagebox.showwarning("!", "Genera vista previa primero.")
-            return
-        self.guardar_config()
-        val = float(self.duration_val.get())
-        horas = val / 60.0 if self.duration_unit.get() == "Minutos" else val
-        payload = {
-            "coords": self.last_parsed_coords, "interval": int(self.cycle_interval.get()),
-            "limit_mb": int(self.limit_mb.get()), "duration_hours": horas,
-            "tg_token": self.tg_token.get(), "tg_chat": self.tg_chat.get(),
-            "sentry": self.mode_sentry.get(), "alert_pct": self.alert_threshold.get(),
-            "save_timelapse": self.mode_timelapse.get()
-        }
-        try:
-            r = requests.post(f"{self.server_ip.get().rstrip('/')}/start_task", json=payload, timeout=3)
-            messagebox.showinfo("RPi", r.json().get("status", "OK"))
-        except Exception as e: messagebox.showerror("Error", str(e))
-
-    def inspeccionar_png(self):
-        f = filedialog.askopenfilename(filetypes=[("PNG", "*.png")])
-        if f:
-            try:
-                img = Image.open(f)
-                meta = img.text
-                key = "WPlace_Source"
-                msg = "METADATOS:\n"
-                if key in meta:
-                    self.root.clipboard_clear()
-                    self.root.clipboard_append(meta[key])
-                    self.root.update()
-                    msg += f"✅ COPIADO:\n{meta[key]}\n\n"
-                msg += "-"*20 + "\n" + "\n".join([f"{k}: {v}" for k,v in meta.items()])
-                messagebox.showinfo("Inspector", msg)
-            except Exception as e: messagebox.showerror("Error", str(e))
-
-    def guardar_local(self):
-        if self.current_image:
-            if not os.path.exists(OUTPUT_FOLDER): os.makedirs(OUTPUT_FOLDER)
-            p = f"{OUTPUT_FOLDER}/local_{datetime.now().strftime('%H%M%S')}.png"
-            info = PngInfo()
-            if self.last_raw_text: info.add_text("WPlace_Source", self.last_raw_text)
-            self.current_image.save(p, pnginfo=info)
-            messagebox.showinfo("Guardado", f"Imagen guardada:\n{p}")
+        self.running = True
+        threading.Thread(target=self.monitor_loop, daemon=True).start()
 
     def cargar_config(self):
-        defaults = {"favorites": {}}
         if os.path.exists(CONFIG_FILE):
-            try:
-                with open(CONFIG_FILE, "r") as f: defaults.update(json.load(f))
+            try: return json.load(open(CONFIG_FILE))
             except: pass
-        return defaults
+        return {"favorites": {}}
 
     def guardar_config(self):
-        self.config.update({
-            "server_ip": self.server_ip.get(), "last_interval": self.cycle_interval.get(),
-            "last_limit": self.limit_mb.get(), "last_duration": self.duration_val.get(),
-            "tg_token": self.tg_token.get(), "tg_chat": self.tg_chat.get(),
-            "mode_timelapse": self.mode_timelapse.get(), "mode_sentry": self.mode_sentry.get(),
-            "alert_threshold": self.alert_threshold.get(), "favorites": self.config.get("favorites", {})
-        })
+        self.config["server_ip"] = self.server_ip.get()
+        with open(CONFIG_FILE, "w") as f: json.dump(self.config, f, indent=4)
+
+    def abrir_carpeta(self, path):
+        path = os.path.abspath(path)
+        if platform.system() == "Windows": os.startfile(path)
+        elif platform.system() == "Darwin": subprocess.Popen(["open", path])
+        else: subprocess.Popen(["xdg-open", path])
+
+    def coords_to_str(self, x, y):
+        return f"(Tl X: {x//1000}, Tl Y: {y//1000}, Px X: {x%1000}, Px Y: {y%1000})"
+
+    def str_to_coords(self, text):
+        match = re.search(r"Tl X:\s*(\d+).*?Tl Y:\s*(\d+).*?Px X:\s*(\d+).*?Px Y:\s*(\d+)", text)
+        if match:
+            tl_x, tl_y, px_x, px_y = map(int, match.groups())
+            return (tl_x * 1000) + px_x, (tl_y * 1000) + px_y
         try:
-            with open(CONFIG_FILE, "w") as f: json.dump(self.config, f, indent=4)
-        except: pass
+            parts = text.replace('(', '').replace(')', '').split(',')
+            return int(parts[0]), int(parts[1])
+        except: raise ValueError("Coord Error")
 
-    def actualizar_estado_remoto(self):
-        def check():
-            try:
-                r = requests.get(f"{self.server_ip.get().rstrip('/')}/status", timeout=2)
-                if r.status_code == 200:
-                    d = r.json()
-                    col = "#4CAF50" if d["running"] else "#FF9800"
-                    txt = "EJECUTANDO" if d["running"] else "EN ESPERA"
-                    prog = 0
-                    if d["running"] and d.get("start_time"):
-                        start = datetime.fromisoformat(d["start_time"])
-                        dur = float(d.get("duration_hours", 24))
-                        curr = (datetime.now() - start).total_seconds()
-                        if (dur*3600) > 0: prog = min(100, max(0, (curr/(dur*3600))*100))
-                    self.root.after(0, lambda: self.ui_update(col, txt, d.get("captures", 0), prog))
-                else: self.root.after(0, lambda: self.ui_update("red", "ERROR", 0, 0))
-            except: self.root.after(0, lambda: self.ui_update("red", "OFFLINE", 0, 0))
-            self.root.after(3000, self.actualizar_estado_remoto)
-        threading.Thread(target=check, daemon=True).start()
+    # ================= PESTAÑA 1: NUEVA TAREA =================
+    def setup_tab_new(self):
+        paned = tk.PanedWindow(self.tab_new, orient=tk.HORIZONTAL, sashwidth=6, sashrelief=tk.RAISED, bg="#d0d0d0")
+        paned.pack(fill='both', expand=True)
 
-    def ui_update(self, col, txt, caps, prog):
-        self.led_canvas.itemconfig(self.led_circle, fill=col)
-        self.status_label.config(text=txt, fg=col if col != "gray" else "#555")
-        self.captures_label.config(text=f"Fotos: {caps}")
-        self.progress_bar["value"] = prog
+        # --- CONTROLES ---
+        left = ttk.Frame(paned, width=400)
+        paned.add(left, minsize=380)
+        
+        # 1. Info General
+        l1 = ttk.LabelFrame(left, text="1. Datos Básicos")
+        l1.pack(fill='x', padx=5, pady=5)
+        tk.Label(l1, text="IP:").grid(row=0, column=0, sticky='e'); tk.Entry(l1, textvariable=self.server_ip, width=20).grid(row=0, column=1)
+        tk.Label(l1, text="Nombre:").grid(row=1, column=0, sticky='e'); 
+        self.task_name = tk.Entry(l1, width=20); self.task_name.grid(row=1, column=1); self.task_name.insert(0, "Objetivo Alpha")
 
-    def guardar_favorito_dialog(self):
-        n = simpledialog.askstring("Guardar", "Nombre:")
-        if n:
+        # 2. Coordenadas
+        l2 = ttk.LabelFrame(left, text="2. Coordenadas")
+        l2.pack(fill='x', padx=5, pady=5)
+        tk.Label(l2, text="P1:").grid(row=0, column=0); self.entry_p1 = tk.Entry(l2, width=32); self.entry_p1.grid(row=0, column=1, pady=2)
+        tk.Label(l2, text="P2:").grid(row=1, column=0); self.entry_p2 = tk.Entry(l2, width=32); self.entry_p2.grid(row=1, column=1, pady=2)
+        
+        # Favoritos
+        f_fav = ttk.Frame(l2)
+        f_fav.grid(row=2, column=0, columnspan=2, pady=5)
+        self.combo_favs = ttk.Combobox(f_fav, width=18, state="readonly", values=list(self.config["favorites"].keys()))
+        self.combo_favs.pack(side='left'); self.combo_favs.bind("<<ComboboxSelected>>", self.cargar_fav)
+        ttk.Button(f_fav, text="💾", width=3, command=self.guardar_fav).pack(side='left', padx=2)
+        ttk.Button(f_fav, text="🗑", width=3, command=self.del_fav).pack(side='left', padx=2)
+
+        # 3. Modos y Parametros
+        l3 = ttk.LabelFrame(left, text="3. Configuración Avanzada")
+        l3.pack(fill='x', padx=5, pady=5)
+        
+        self.chk_time = tk.BooleanVar(value=True)
+        self.chk_sent = tk.BooleanVar(value=False)
+        ttk.Checkbutton(l3, text="Timelapse", variable=self.chk_time).grid(row=0, column=0, sticky='w')
+        ttk.Checkbutton(l3, text="Centinela", variable=self.chk_sent).grid(row=0, column=1, sticky='w')
+
+        # Grid de parametros
+        tk.Label(l3, text="Intervalo (min):").grid(row=1, column=0, sticky='e')
+        self.sp_int = ttk.Spinbox(l3, from_=1, to=120, width=6); self.sp_int.set(1); self.sp_int.grid(row=1, column=1, sticky='w')
+        
+        tk.Label(l3, text="Duración (h):").grid(row=2, column=0, sticky='e')
+        self.sp_dur = ttk.Spinbox(l3, from_=0, to=48, width=6); self.sp_dur.set(0); self.sp_dur.grid(row=2, column=1, sticky='w')
+        
+        tk.Label(l3, text="Límite MB:").grid(row=3, column=0, sticky='e')
+        self.sp_mb = ttk.Spinbox(l3, from_=100, to=5000, width=6); self.sp_mb.set(1000); self.sp_mb.grid(row=3, column=1, sticky='w')
+
+        tk.Label(l3, text="Sensibilidad %:").grid(row=4, column=0, sticky='e')
+        self.sp_sens = ttk.Spinbox(l3, from_=0.1, to=50, width=6, increment=0.1); self.sp_sens.set(5.0); self.sp_sens.grid(row=4, column=1, sticky='w')
+
+        # 4. Telegram
+        l4 = ttk.LabelFrame(left, text="4. Telegram (Opc)")
+        l4.pack(fill='x', padx=5, pady=5)
+        self.et_tok = tk.Entry(l4, width=35); self.et_tok.pack(pady=2); self.et_tok.insert(0, self.config.get("tg_token", ""))
+        self.et_chat = tk.Entry(l4, width=35); self.et_chat.pack(pady=2); self.et_chat.insert(0, self.config.get("tg_chat", ""))
+
+        ttk.Button(left, text="🚀 INICIAR TAREA", style="Accent.TButton", command=self.lanzar).pack(fill='x', padx=10, pady=15, ipady=5)
+
+        # --- VISUALIZACION ---
+        right = ttk.LabelFrame(paned, text="Visor Táctico")
+        paned.add(right, minsize=400, stretch="always")
+        
+        # Toolbar
+        tool = ttk.Frame(right)
+        tool.pack(fill='x', pady=2)
+        ttk.Button(tool, text="📷 Cargar Vista", command=self.preview).pack(side='left', padx=2)
+        ttk.Button(tool, text="💾 Guardar PNG", command=self.snap_local).pack(side='left', padx=2)
+        ttk.Button(tool, text="➕ Zoom In", command=lambda: self.zoom(1.2)).pack(side='right', padx=2)
+        ttk.Button(tool, text="➖ Zoom Out", command=lambda: self.zoom(0.8)).pack(side='right', padx=2)
+
+        # Canvas con fondo ajedrez (simulado con color oscuro)
+        self.canvas = tk.Canvas(right, bg="#303030", cursor="cross") # Grid oscuro para resaltar PNGs
+        sx = ttk.Scrollbar(right, orient="horizontal", command=self.canvas.xview)
+        sy = ttk.Scrollbar(right, orient="vertical", command=self.canvas.yview)
+        self.canvas.configure(xscrollcommand=sx.set, yscrollcommand=sy.set)
+        sx.pack(side="bottom", fill="x"); sy.pack(side="right", fill="y"); self.canvas.pack(fill="both", expand=True)
+        self.canvas.bind("<Button-1>", self.map_click)
+        
+        # Generar patrón de ajedrez (checkerboard)
+        self.create_checkerboard()
+
+    def create_checkerboard(self):
+        # Creamos una imagen pequeña de 20x20 con patrón gris/oscuro
+        check = Image.new("RGB", (20, 20), "#404040")
+        d = ImageDraw.Draw(check)
+        d.rectangle([0,0,10,10], fill="#303030")
+        d.rectangle([10,10,20,20], fill="#303030")
+        self.bg_pattern = ImageTk.PhotoImage(check)
+        # Se usará para "tilar" el fondo si es necesario, pero un BG fijo suele bastar
+
+    # --- FUNCIONES VISUALES ---
+    def map_click(self, e):
+        # Ajustar coords según zoom y scroll
+        cx = self.canvas.canvasx(e.x)
+        cy = self.canvas.canvasy(e.y)
+        
+        real_x = int(cx / self.zoom_level)
+        real_y = int(cy / self.zoom_level)
+        
+        txt = self.coords_to_str(real_x, real_y)
+        if self.click_count % 2 == 0: self.entry_p1.delete(0, tk.END); self.entry_p1.insert(0, txt)
+        else: self.entry_p2.delete(0, tk.END); self.entry_p2.insert(0, txt)
+        self.click_count += 1
+        
+        # Dibujar marcador ajustado al zoom
+        r = 5 * self.zoom_level
+        self.canvas.create_oval(cx-r, cy-r, cx+r, cy+r, outline="#00FF00", width=2, tags="marker")
+
+    def preview(self):
+        try:
+            p1 = self.str_to_coords(self.entry_p1.get() or "0,0")
+            p2 = self.str_to_coords(self.entry_p2.get() or "1000,1000")
+            c = {"x_start": min(p1[0], p2[0]), "y_start": min(p1[1], p2[1]), "x_end": max(p1[0], p2[0]), "y_end": max(p1[1], p2[1])}
+            
+            w, h = c['x_end']-c['x_start'], c['y_end']-c['y_start']
+            if w*h > 25000000 and not messagebox.askyesno("Alerta", "Área gigante. ¿Seguir?"): return
+
+            img = Image.new("RGBA", (w, h))
+            tx_s, tx_e = c['x_start']//1000, (c['x_end']-1)//1000
+            ty_s, ty_e = c['y_start']//1000, (c['y_end']-1)//1000
+            
+            self.root.title("Descargando..."); self.root.update()
+            for tx in range(tx_s, tx_e + 1):
+                for ty in range(ty_s, ty_e + 1):
+                    try:
+                        r = requests.get(f"{TILE_SERVER}/{tx}/{ty}.png", timeout=2)
+                        if r.status_code == 200:
+                            tile = Image.open(BytesIO(r.content)).convert("RGBA")
+                            img.paste(tile, ((tx*1000)-c['x_start'], (ty*1000)-c['y_start']), tile)
+                    except: pass
+            
+            self.root.title("WPlace Commander v16.0")
+            self.preview_image_raw = img
+            self.zoom_level = 1.0
+            self.render_image()
+            
+        except Exception as e: messagebox.showerror("Error", str(e))
+
+    def zoom(self, factor):
+        if not self.preview_image_raw: return
+        self.zoom_level *= factor
+        self.render_image()
+
+    def render_image(self):
+        if not self.preview_image_raw: return
+        w, h = self.preview_image_raw.size
+        nw, nh = int(w*self.zoom_level), int(h*self.zoom_level)
+        
+        # Resizing de alta calidad
+        img_resized = self.preview_image_raw.resize((nw, nh), Image.Resampling.NEAREST)
+        self.tk_image_ref = ImageTk.PhotoImage(img_resized)
+        
+        self.canvas.delete("all")
+        # Centrar imagen si es pequeña
+        self.canvas.config(scrollregion=(0, 0, nw, nh))
+        self.canvas.create_image(0, 0, image=self.tk_image_ref, anchor="nw")
+
+    def snap_local(self):
+        if self.preview_image_raw:
+            if not os.path.exists(OUTPUT_FOLDER): os.makedirs(OUTPUT_FOLDER)
+            path = f"{OUTPUT_FOLDER}/snap_{datetime.now().strftime('%H%M%S')}.png"
+            self.preview_image_raw.save(path)
+            messagebox.showinfo("OK", path); self.abrir_carpeta(OUTPUT_FOLDER)
+
+    # --- FAVORITOS ---
+    def guardar_fav(self):
+        n = simpledialog.askstring("Nombre", "Nombre zona:")
+        if n: 
             self.config["favorites"][n] = {"p1": self.entry_p1.get(), "p2": self.entry_p2.get()}
-            self.guardar_config(); self.actualizar_combo_favs()
-
-    def borrar_favorito(self):
+            self.guardar_config(); self.combo_favs['values'] = list(self.config["favorites"].keys())
+            self.combo_favs.set(n)
+    def del_fav(self):
         n = self.combo_favs.get()
-        if n in self.config["favorites"]:
-            del self.config["favorites"][n]
-            self.guardar_config(); self.actualizar_combo_favs()
-
-    def actualizar_combo_favs(self):
-        self.combo_favs['values'] = list(self.config["favorites"].keys())
-
-    def cargar_favorito(self, e):
+        if n in self.config["favorites"]: 
+            del self.config["favorites"][n]; self.guardar_config()
+            self.combo_favs['values'] = list(self.config["favorites"].keys()); self.combo_favs.set('')
+    def cargar_fav(self, e):
         d = self.config["favorites"].get(self.combo_favs.get())
-        if d:
-            self.entry_p1.delete(0,tk.END); self.entry_p1.insert(0, d['p1'])
-            self.entry_p2.delete(0,tk.END); self.entry_p2.insert(0, d['p2'])
+        if d: self.entry_p1.delete(0, tk.END); self.entry_p1.insert(0, d['p1']); self.entry_p2.delete(0, tk.END); self.entry_p2.insert(0, d['p2'])
 
-    def pegar_portapapeles(self, event):
-        try: event.widget.delete(0, tk.END); event.widget.insert(0, self.root.clipboard_get())
-        except: pass
-
-    def detener_rpi(self):
-        try: requests.post(f"{self.server_ip.get().rstrip('/')}/stop_task")
-        except: pass
-    def descargar_zip(self):
+    # --- LANZAR ---
+    def lanzar(self):
         try:
-            r = requests.get(f"{self.server_ip.get().rstrip('/')}/download_zip", stream=True)
-            if r.status_code == 200:
-                if not os.path.exists(OUTPUT_FOLDER): os.makedirs(OUTPUT_FOLDER)
-                p = f"{OUTPUT_FOLDER}/pack_{datetime.now().strftime('%H%M%S')}.zip"
-                with open(p, 'wb') as f:
-                    for chunk in r.iter_content(8192): f.write(chunk)
-                messagebox.showinfo("OK", f"Guardado!")
+            p1 = self.str_to_coords(self.entry_p1.get()); p2 = self.str_to_coords(self.entry_p2.get())
+            c = {"x_start": min(p1[0], p2[0]), "y_start": min(p1[1], p2[1]), "x_end": max(p1[0], p2[0]), "y_end": max(p1[1], p2[1])}
+            
+            data = {
+                "name": self.task_name.get(), "coords": c,
+                "save_timelapse": self.chk_time.get(), "sentry": self.chk_sent.get(),
+                "interval": int(self.sp_int.get()), "duration_hours": float(self.sp_dur.get()),
+                "limit_mb": int(self.sp_mb.get()), "alert_pct": float(self.sp_sens.get()),
+                "tg_token": self.et_tok.get(), "tg_chat": self.et_chat.get()
+            }
+            r = requests.post(f"{self.server_ip.get().rstrip('/')}/tasks/create", json=data, timeout=3)
+            if r.status_code==200:
+                tid = r.json()['task_id']
+                requests.post(f"{self.server_ip.get().rstrip('/')}/tasks/{tid}/start")
+                self.notebook.select(1); self.guardar_config()
+            else: messagebox.showerror("Err", r.text)
+        except Exception as e: messagebox.showerror("Err", str(e))
+
+    # ================= PESTAÑA 2: RADAR =================
+    def setup_tab_manager(self):
+        f = ttk.LabelFrame(self.tab_manager, text="Estado Global")
+        f.pack(fill='x', padx=10, pady=5)
+        self.lbl_cpu = tk.Label(f, text="CPU: --%", fg="blue", font=("Arial", 10, "bold"))
+        self.lbl_cpu.pack(side='left', padx=20)
+        self.lbl_ram = tk.Label(f, text="RAM: --%", fg="green", font=("Arial", 10, "bold"))
+        self.lbl_ram.pack(side='left', padx=20)
+        
+        # MENU CONTEXTUAL
+        self.context_menu = Menu(self.root, tearoff=0)
+        self.context_menu.add_command(label="📥 Descargar datos de esta tarea", command=self.descargar_tarea_individual)
+        self.context_menu.add_command(label="🗑 Eliminar tarea", command=lambda: self.control_task("delete"))
+
+        cols = ("ID", "Nombre", "Modo", "Estado", "Fotos", "Restante")
+        self.tree = ttk.Treeview(self.tab_manager, columns=cols, show='headings', selectmode='browse')
+        for c in cols: self.tree.heading(c, text=c); self.tree.column(c, anchor="center")
+        self.tree.column("Nombre", width=200, anchor="w")
+        self.tree.pack(fill='both', expand=True, padx=10, pady=5)
+        self.tree.bind("<Button-3>", self.show_context_menu) # Click derecho
+
+        bf = ttk.Frame(self.tab_manager)
+        bf.pack(fill='x', padx=10, pady=10)
+        ttk.Button(bf, text="▶ START", command=lambda: self.control_task("start")).pack(side='left')
+        ttk.Button(bf, text="⏸ STOP", command=lambda: self.control_task("stop")).pack(side='left', padx=5)
+        ttk.Button(bf, text="🗑 BORRAR", command=lambda: self.control_task("delete")).pack(side='right')
+
+    def show_context_menu(self, event):
+        item = self.tree.identify_row(event.y)
+        if item:
+            self.tree.selection_set(item)
+            self.context_menu.post(event.x_root, event.y_root)
+
+    def descargar_tarea_individual(self):
+        sel = self.tree.selection()
+        if not sel: return
+        tid = self.tree.item(sel[0])['values'][0]
+        self.descargar_zip(tid)
+
+    def control_task(self, act):
+        sel = self.tree.selection()
+        if sel:
+            tid = self.tree.item(sel[0])['values'][0]
+            try: requests.post(f"{self.server_ip.get().rstrip('/')}/tasks/{tid}/{act}"); self.refresh()
+            except: pass
+
+    def monitor_loop(self):
+        while self.running:
+            try: self.refresh()
+            except: pass
+            time.sleep(2)
+
+    def refresh(self):
+        try:
+            r = requests.get(f"{self.server_ip.get().rstrip('/')}/status", timeout=1)
+            if r.status_code==200: self.root.after(0, lambda: self.upd_ui(r.json()))
         except: pass
+
+    def upd_ui(self, d):
+        self.lbl_cpu.config(text=f"CPU: {d['system']['cpu']}%")
+        self.lbl_ram.config(text=f"RAM: {d['system']['ram']}%")
+        
+        for r in self.tree.get_children(): self.tree.delete(r)
+        for t in d['tasks']:
+            tag = 'run' if t['status']=='running' else 'stop'
+            if t['status']=='error': tag='err'
+            self.tree.insert("", "end", values=(t['id'], t['name'], t['mode'], t['status'].upper(), t['captures'], t['restante']), tags=(tag,))
+        self.tree.tag_configure('run', foreground='green'); self.tree.tag_configure('err', foreground='red')
+
+    # ================= PESTAÑA 3: SISTEMA =================
+    def setup_tab_system(self):
+        f = ttk.LabelFrame(self.tab_system, text="Gestión de Datos")
+        f.pack(fill='both', padx=20, pady=20)
+        
+        ttk.Button(f, text="📥 DESCARGAR ZIP COMPLETO (Todas las tareas)", style="Accent.TButton", command=lambda: self.descargar_zip(None)).pack(pady=10, fill='x')
+        ttk.Button(f, text="⚠️ VACIAR SERVIDOR (Borrar Todo)", style="Warning.TButton", command=self.vaciar_server).pack(pady=10, fill='x')
+        
+        f2 = ttk.LabelFrame(self.tab_system, text="Control Crítico")
+        f2.pack(fill='x', padx=20, pady=20)
+        ttk.Button(f2, text="🛑 APAGADO DE EMERGENCIA", style="Danger.TButton", command=self.stop_all).pack(pady=10)
+
+    def descargar_zip(self, tid=None):
+        try:
+            url = f"{self.server_ip.get().rstrip('/')}/download_zip"
+            if tid: url += f"?task_id={tid}"
+            
+            r = requests.get(url, stream=True)
+            if r.status_code==200:
+                if not os.path.exists(OUTPUT_FOLDER): os.makedirs(OUTPUT_FOLDER)
+                name = f"task_{tid}" if tid else "full_backup"
+                path = f"{OUTPUT_FOLDER}/{name}_{datetime.now().strftime('%H%M%S')}.zip"
+                with open(path, 'wb') as f: 
+                    for chunk in r.iter_content(8192): f.write(chunk)
+                messagebox.showinfo("OK", path); self.abrir_carpeta(OUTPUT_FOLDER)
+        except Exception as e: messagebox.showerror("Err", str(e))
+
+    def stop_all(self):
+        if messagebox.askyesno("Confirmar", "Detener todo?"): requests.post(f"{self.server_ip.get().rstrip('/')}/stop_all")
     def vaciar_server(self):
-        if messagebox.askyesno("Confirma", "¿Borrar fotos RPi?"): requests.post(f"{self.server_ip.get().rstrip('/')}/clear_data")
+        if messagebox.askyesno("PELIGRO", "¿Borrar TODAS las fotos y tareas de la Raspberry?"): 
+            requests.post(f"{self.server_ip.get().rstrip('/')}/clear_all")
+            messagebox.showinfo("Hecho", "Servidor formateado.")
 
 if __name__ == "__main__":
-    try:
-        root = tk.Tk()
-        app = WPlaceClient(root)
-        root.mainloop()
-    except Exception as e: messagebox.showerror("Error", str(e))
+    root = tk.Tk()
+    app = WPlaceClient(root)
+    root.mainloop()

@@ -1,0 +1,53 @@
+{
+    "1": {
+        "name": "Objetivo Alpha1",
+        "coords": {
+            "x_start": 1354853,
+            "y_start": 1695249,
+            "x_end": 1354883,
+            "y_end": 1695281
+        },
+        "save_timelapse": true,
+        "sentry": false,
+        "interval": 1,
+        "duration_hours": 1.0,
+        "limit_mb": 1000,
+        "alert_pct": 1.0,
+        "tg_token": "8484800468:AAET6mXnQKRavmMGlidhoqfKntkFfciYjjo",
+        "tg_chat": "6921079409"
+    },
+    "2": {
+        "name": "Objetivo Alpha2",
+        "coords": {
+            "x_start": 1354853,
+            "y_start": 1695249,
+            "x_end": 1354883,
+            "y_end": 1695281
+        },
+        "save_timelapse": false,
+        "sentry": true,
+        "interval": 1,
+        "duration_hours": 0.0,
+        "limit_mb": 1000,
+        "alert_pct": 1.0,
+        "tg_token": "8484800468:AAET6mXnQKRavmMGlidhoqfKntkFfciYjjo",
+        "tg_chat": "6921079409"
+    },
+    "3": {
+        "name": "Objetivo Alpha3",
+        "coords": {
+            "x_start": 457472,
+            "y_start": 875112,
+            "x_end": 457763,
+            "y_end": 875230
+        },
+        "save_timelapse": false,
+        "sentry": true,
+        "interval": 1,
+        "duration_hours": 0.0,
+        "limit_mb": 1000,
+        "alert_pct": 1.0,
+        "tg_token": "8484800468:AAET6mXnQKRavmMGlidhoqfKntkFfciYjjo",
+        "tg_chat": "6921079409"
+    }
+}
