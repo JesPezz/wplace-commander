@@ -302,12 +302,20 @@ class WPlaceClient:
             try:
                 img = Image.open(f)
                 meta = img.text # Diccionario de metadatos
-                coords = meta.get("WPlace_Coords", "No encontrado")
-                tid = meta.get("WPlace_TaskID", "?")
-                name = meta.get("WPlace_TaskName", "?")
-                messagebox.showinfo("Inspección Forense", f"📁 Archivo: {os.path.basename(f)}\n\n📍 Coordenadas:\n{coords}\n\n🤖 Tarea ID: {tid}\n🏷️ Nombre: {name}")
-            except Exception as e: messagebox.showerror("Error", str(e))
+                
+                # Intentamos leer la etiqueta standard o la custom
+                coords = meta.get("Description") or meta.get("Coordinates") or "Sin datos de coordenadas"
+                
+                # Si hay más datos, los mostramos, si no, solo coords
+                msg = f"📁 Archivo: {os.path.basename(f)}\n\n📍 {coords}"
+                
+                # Extra: si hubiera datos viejos
+                if "WPlace_TaskName" in meta:
+                    msg += f"\n🏷️ Tarea: {meta['WPlace_TaskName']}"
 
+                messagebox.showinfo("Inspección Forense", msg)
+            except Exception as e: messagebox.showerror("Error", str(e))
+            
     def descargar_zip(self, tid=None):
         try:
             url = f"{self.server_ip.get().rstrip('/')}/download_zip" + (f"?task_id={tid}" if tid else "")

@@ -56,14 +56,17 @@ class TaskWorker:
             except: pass
 
     def save_image_with_metadata(self, img, path):
-        # 🧠 INYECCIÓN DE METADATOS FORENSES
+        # 🧠 METADATOS LIMPIOS (SOLO COORDENADAS)
         meta = PngImagePlugin.PngInfo()
-        # Guardamos las coordenadas para poder recuperarlas después con "Inspeccionar"
         c = self.config['coords']
-        coords_str = f"Tl X: {c['x_start']//1000}, Tl Y: {c['y_start']//1000}, Px X: {c['x_start']%1000}, Px Y: {c['y_start']%1000}"
-        meta.add_text("WPlace_Coords", coords_str)
-        meta.add_text("WPlace_TaskID", str(self.id))
-        meta.add_text("WPlace_TaskName", self.config.get('name', 'Unknown'))
+        
+        # Formato solicitado: Solo P1 (Inicio)
+        # Usamos la clave standard 'Description' para máxima compatibilidad
+        coords_simple = f"P1 X: {c['x_start']}, P1 Y: {c['y_start']}"
+        meta.add_text("Description", coords_simple)
+        
+        # También lo guardamos en una clave personalizada por si acaso
+        meta.add_text("Coordinates", coords_simple)
         
         img.save(path, "PNG", pnginfo=meta)
 
@@ -123,7 +126,13 @@ class TaskWorker:
     def run_loop(self):
         self.running = True
         self.status = "running"
-        if not self.start_time_ts: self.start_time_ts = time.time()
+        
+        # 🧠 FIX DE PERSISTENCIA TEMPORAL
+        # Si no había tiempo guardado, lo creamos Y LO GUARDAMOS INMEDIATAMENTE
+        if not self.start_time_ts: 
+            self.start_time_ts = time.time()
+            self.save_persistence() # Guardar en disco AHORA MISMO
+        
         self.log("INICIANDO LOOP")
         self.send_telegram("🚀 *Iniciada*", "El sistema está monitoreando el objetivo.")
 
@@ -134,6 +143,9 @@ class TaskWorker:
                 self.stop(); self.send_telegram("🏁 *Finalizada*", "Tiempo cumplido."); break
 
             try:
+                # Guardamos persistencia en cada ciclo para asegurar que el tiempo no se pierda si hay corte de luz
+                self.save_persistence()
+
                 limit_mb = float(self.config.get('limit_mb', 1000))
                 current_mb = sum(os.path.getsize(os.path.join(self.data_dir, f)) for f in os.listdir(self.data_dir)) / (1024*1024)
                 if current_mb > limit_mb: self.stop(); self.send_telegram("🛑 *Detenida*", "Límite de MB excedido."); break
@@ -169,7 +181,7 @@ class TaskWorker:
                         self.last_saved_img = current.copy()
                         self.last_saved_path = path
                         self.captures_count += 1
-                        self.save_persistence()
+                        self.save_persistence() # Guardar estado tras captura
                         self.log(f"Guardado: {path}")
 
             except Exception as e: self.log(f"Error: {e}"); self.status = "error"
