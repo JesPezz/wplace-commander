@@ -1,4 +1,4 @@
-import os, time, json, threading, requests, zipfile
+import os, time, json, threading, requests, zipfile, sys
 from flask import Flask, request, jsonify, send_file
 from PIL import Image
 from io import BytesIO
@@ -18,13 +18,16 @@ class WPlaceServer:
     def __init__(self):
         self.running = False
         self.config = {}
-        self.start_time_ts = None # Usaremos Timestamp (float)
+        self.start_time_ts = None
         self.captures_count = 0
-        self.last_img = None
+        self.last_img = None  # Referencia para Centinela
+        self.last_saved_timelapse_img = None # Referencia para Timelapse
         self.load_state()
 
     def log(self, msg):
-        print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}")
+        # Forzamos a que el mensaje aparezca en journalctl inmediatamente
+        timestamp = datetime.now().strftime('%H:%M:%S')
+        print(f"[{timestamp}] {msg}", flush=True)
 
     def save_state(self):
         try:
@@ -50,7 +53,7 @@ class WPlaceServer:
                     self.start_time_ts = state.get("start_timestamp")
                 
                 if self.running:
-                    self.log("♻️ Reanudando tarea detectada...")
+                    self.log("♻️ REANUDANDO TAREA DETECTADA TRAS REINICIO")
                     threading.Thread(target=self.worker, daemon=True).start()
             except Exception as e:
                 self.log(f"Error cargando estado: {e}")
@@ -64,95 +67,118 @@ class WPlaceServer:
             url = f"https://api.telegram.org/bot{token}/{method}"
             data = {'chat_id': chat_id, 'caption' if image_path else 'text': message, 'parse_mode': 'Markdown'}
             files = {'document': open(image_path, 'rb')} if image_path else None
-            requests.post(url, data=data, files=files)
+            requests.post(url, data=data, files=files, timeout=10)
         except Exception as e: self.log(f"Error TG: {e}")
 
     def calculate_diff(self, img1, img2):
         if img1.size != img2.size: return 100.0
-        pairs = zip(img1.convert("RGB").getdata(), img2.convert("RGB").getdata())
+        # Comparamos en RGB para máxima precisión
+        i1, i2 = img1.convert("RGB"), img2.convert("RGB")
+        pairs = zip(i1.getdata(), i2.getdata())
         dif = sum(abs(c1-c2) for p1,p2 in pairs for c1,c2 in zip(p1,p2))
-        return (dif / 255.0 * 100) / (img1.size[0] * img1.size[1] * 3)
+        return (dif / 255.0 * 100) / (i1.size[0] * i1.size[1] * 3)
+
+    def download_area(self, c):
+        w, h = c['x_end']-c['x_start'], c['y_end']-c['y_start']
+        full_img = Image.new("RGBA", (w, h))
+        tx_s, tx_e = c['x_start']//1000, (c['x_end']-1)//1000
+        ty_s, ty_e = c['y_start']//1000, (c['y_end']-1)//1000
+        for tx in range(tx_s, tx_e + 1):
+            for ty in range(ty_s, ty_e + 1):
+                r = requests.get(f"https://backend.wplace.live/files/s0/tiles/{tx}/{ty}.png", timeout=10)
+                tile = Image.open(BytesIO(r.content)).convert("RGBA")
+                full_img.paste(tile, ((tx*1000)-c['x_start'], (ty*1000)-c['y_start']), tile)
+        return full_img
 
     def worker(self):
-        modos = []
-        if self.config.get('save_timelapse'): modos.append("📷 *Timelapse*")
-        if self.config.get('sentry'): modos.append("🛡️ *Centinela*")
-        modo_str = " + ".join(modos) if modos else "Ninguno"
-        
+        self.log(">>> INICIANDO HILO DE TRABAJO (WORKER)")
         duracion_h = float(self.config.get('duration_hours', 0))
         
-        # Cálculo de tiempo restante al (re)iniciar
-        if duracion_h > 0 and self.start_time_ts:
-            horas_pasadas = (time.time() - self.start_time_ts) / 3600
-            restante = max(0, duracion_h - horas_pasadas)
-            dur_str = f"{duracion_h}h (Faltan: *{restante:.2f}h*)"
-        else:
-            dur_str = "♾️ *Indefinida*"
-
-        self.send_telegram(f"🔄 *Sistema Activo*\n\n✅ *Modos:* {modo_str}\n⏱️ *Tiempo:* {dur_str}\n📦 *Capturas:* {self.captures_count}")
+        # Reporte de inicio
+        self.send_telegram(f"🔄 *Sistema Activo*\n📦 Capturas previas: {self.captures_count}")
 
         while self.running:
-            if duracion_h > 0:
+            # 1. Control de tiempo
+            if duracion_h > 0 and self.start_time_ts:
                 horas_pasadas = (time.time() - self.start_time_ts) / 3600
                 if horas_pasadas >= duracion_h:
-                    self.send_telegram(f"🏁 *Tarea Finalizada*\nEl tiempo ha expirado.")
-                    self.running = False
-                    self.save_state()
-                    break
+                    self.send_telegram("🏁 *Tarea Finalizada por Tiempo*")
+                    self.running = False; self.save_state(); break
 
             try:
-                c = self.config['coords']
-                full_img = Image.new("RGBA", (c['x_end']-c['x_start'], c['y_end']-c['y_start']))
-                for tx in range(c['x_start']//1000, (c['x_end']-1)//1000 + 1):
-                    for ty in range(c['y_start']//1000, (c['y_end']-1)//1000 + 1):
-                        r = requests.get(f"https://backend.wplace.live/files/s0/tiles/{tx}/{ty}.png", timeout=10)
-                        tile = Image.open(BytesIO(r.content)).convert("RGBA")
-                        full_img.paste(tile, ((tx*1000)-c['x_start'], (ty*1000)-c['y_start']), tile)
+                # 2. Captura
+                self.log("Descargando lienzo actual...")
+                current_img = self.download_area(self.config['coords'])
 
+                # 3. Lógica Centinela
                 if self.config.get('sentry'):
                     if self.last_img is None:
-                        self.last_img = full_img.copy()
+                        self.last_img = current_img.copy()
+                        self.log("Centinela: Imagen base establecida.")
                     else:
-                        diff = self.calculate_diff(self.last_img, full_img)
+                        diff = self.calculate_diff(self.last_img, current_img)
+                        self.log(f"Centinela: Dif = {diff:.4f}%")
                         if diff >= self.config.get('alert_pct', 5.0):
                             path = os.path.join(SENTRY_DIR, "alert.png")
-                            full_img.save(path, "PNG")
-                            self.send_telegram(f"⚠️ *¡ATAQUE DETECTADO!*\n📉 Variación: `{diff:.2f}%`", path)
-                            self.last_img = full_img.copy()
+                            current_img.save(path, "PNG")
+                            self.send_telegram(f"⚠️ *¡ATAQUE!* Dif: `{diff:.2f}%`", path)
+                            self.last_img = current_img.copy()
 
+                # 4. Lógica Timelapse Inteligente
                 if self.config.get('save_timelapse'):
-                    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-                    path = os.path.join(DATA_DIR, f"cap_{ts}.png")
-                    full_img.save(path, "PNG")
-                    self.captures_count += 1
-                    self.save_state()
-                    self.log(f"Timelapse: Foto {self.captures_count} guardada")
+                    should_save = False
+                    if self.last_saved_timelapse_img is None:
+                        should_save = True
+                        self.log("Timelapse: Primera foto de la sesión.")
+                    else:
+                        diff_t = self.calculate_diff(self.last_saved_timelapse_img, current_img)
+                        self.log(f"Timelapse: Comparando... Dif = {diff_t:.4f}%")
+                        # Umbral de seguridad para capturar incluso 1 solo pixel
+                        if diff_t > 0.00001: 
+                            should_save = True
 
-            except Exception as e: self.log(f"Error: {e}")
+                    if should_save:
+                        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                        path = os.path.join(DATA_DIR, f"cap_{ts}.png")
+                        current_img.save(path, "PNG")
+                        self.last_saved_timelapse_img = current_img.copy()
+                        self.captures_count += 1
+                        self.save_state()
+                        self.log(f"✅ TIMELAPSE GUARDADO: {path} (Conteo: {self.captures_count})")
+                    else:
+                        self.log("💤 Timelapse: Sin cambios. No se guarda nada.")
+
+            except Exception as e:
+                self.log(f"❌ ERROR EN CICLO: {e}")
+
             time.sleep(self.config.get('interval', 1) * 60)
+        
+        self.log(">>> HILO DE TRABAJO FINALIZADO")
 
 server = WPlaceServer()
 
 @app.route('/start_task', methods=['POST'])
 def start():
+    server.log("Recibida orden: START")
     server.config = request.json
     server.running = True
-    server.start_time_ts = time.time() # Guardamos inicio exacto
+    server.start_time_ts = time.time()
     server.captures_count = 0
     server.last_img = None
+    server.last_saved_timelapse_img = None
     server.save_state()
     threading.Thread(target=server.worker, daemon=True).start()
     return jsonify({"status": "ok"})
 
 @app.route('/stop_task', methods=['POST'])
 def stop():
+    server.log("Recibida orden: STOP")
     server.running = False
     server.save_state()
     return jsonify({"status": "stopped"})
 
 @app.route('/status', methods=['GET'])
 def status():
-    # Cálculo dinámico para el cliente
     return jsonify({
         "running": server.running, 
         "captures": server.captures_count, 
@@ -173,4 +199,5 @@ def clear():
     return jsonify({"status": "cleared"})
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000)
+    # host='0.0.0.0' para que acepte conexiones externas
+    app.run(host='0.0.0.0', port=5000, debug=False)
