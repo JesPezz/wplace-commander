@@ -7,6 +7,7 @@ timelapse_data/
 wplace_capturas_local/
 *.zip
 *.png
+*.json
 
 # Archivos de estado y configuración local
 wplace_state.json

@@ -10,7 +10,6 @@ class TaskWorker:
         self.data_dir = data_dir
         self.sentry_dir = sentry_dir
         
-        # Estado
         self.running = False
         self.paused = False
         self.status = "stopped"
@@ -24,7 +23,6 @@ class TaskWorker:
         self.load_persistence()
 
     def log(self, msg):
-        # LOGS DETALLADOS: [Hora] [ID] [Modo] Mensaje
         modos = "T" if self.config.get('save_timelapse') else ""
         modos += "S" if self.config.get('sentry') else ""
         print(f"[{datetime.now().strftime('%H:%M:%S')}] [T{self.id}|{modos}] {msg}", flush=True)
@@ -62,8 +60,17 @@ class TaskWorker:
         chat_id = self.config.get("tg_chat")
         if not token or not chat_id: return
         
-        # INFO RICA EN TELEGRAM
+        # CÁLCULOS PARA NOTIFICACIÓN
         start_str = datetime.fromtimestamp(self.start_time_ts).strftime('%H:%M') if self.start_time_ts else "--:--"
+        
+        # Tiempo Restante
+        dur = float(self.config.get('duration_hours', 0))
+        restante_str = "♾️ Infinito"
+        if dur > 0 and self.start_time_ts:
+            elapsed = (time.time() - self.start_time_ts) / 3600
+            rest = max(0, dur - elapsed)
+            restante_str = f"{rest:.2f}h"
+
         modos = []
         if self.config.get('save_timelapse'): modos.append("📷 Timelapse")
         if self.config.get('sentry'): modos.append("🛡️ Centinela")
@@ -73,6 +80,7 @@ class TaskWorker:
             f"{title}\n\n"
             f"⚙️ *Modos:* {' + '.join(modos)}\n"
             f"🕒 *Inicio:* {start_str}\n"
+            f"⏳ *Restante:* {restante_str}\n"
             f"📦 *Capturas:* {self.captures_count}\n"
             f"{details}"
         )
@@ -116,13 +124,11 @@ class TaskWorker:
             if self.paused:
                 self.status = "paused"; time.sleep(1); continue
             
-            # Limite Tiempo
             dur = float(self.config.get('duration_hours', 0))
             if dur > 0 and (time.time() - self.start_time_ts)/3600 >= dur:
                 self.stop(); self.send_telegram("🏁 *Finalizada*", "Tiempo cumplido."); break
 
             try:
-                # Limite MB
                 limit_mb = float(self.config.get('limit_mb', 1000))
                 current_mb = sum(os.path.getsize(os.path.join(self.data_dir, f)) for f in os.listdir(self.data_dir)) / (1024*1024)
                 if current_mb > limit_mb:
@@ -131,7 +137,6 @@ class TaskWorker:
                 self.log("Descargando...")
                 current = self.download_area()
 
-                # CENTINELA
                 if self.config.get('sentry'):
                     sensibilidad = float(self.config.get('alert_pct', 5.0))
                     if self.last_img is None: self.last_img = current.copy()
@@ -145,7 +150,6 @@ class TaskWorker:
                             self.last_img = current.copy()
                             self.log(f"ALERTA enviada. Dif: {diff}%")
 
-                # TIMELAPSE
                 if self.config.get('save_timelapse'):
                     should_save = False
                     if self.last_saved_img is None: should_save = True
@@ -176,7 +180,6 @@ class TaskWorker:
         rest = "Inf"
         if dur > 0 and self.start_time_ts: rest = f"{max(0, dur - (time.time()-self.start_time_ts)/3600):.2f}h"
         
-        # Modo String
         m = []
         if self.config.get('save_timelapse'): m.append("T")
         if self.config.get('sentry'): m.append("S")
