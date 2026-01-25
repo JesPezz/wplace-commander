@@ -9,7 +9,7 @@ app = Flask(__name__)
 # --- RUTAS Y ARCHIVOS ---
 DATA_DIR = "timelapse_data"
 SENTRY_DIR = "sentry_data"
-STATE_FILE = "wplace_state.json" # Archivo donde guardaremos el progreso
+STATE_FILE = "wplace_state.json"
 
 for d in [DATA_DIR, SENTRY_DIR]:
     if not os.path.exists(d): os.makedirs(d)
@@ -18,24 +18,21 @@ class WPlaceServer:
     def __init__(self):
         self.running = False
         self.config = {}
-        self.start_time = None
+        self.start_time_ts = None # Usaremos Timestamp (float)
         self.captures_count = 0
         self.last_img = None
-        
-        # INTENTAR CARGAR ESTADO PREVIO AL INICIAR
         self.load_state()
 
     def log(self, msg):
         print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}")
 
     def save_state(self):
-        """Guarda la configuración y el progreso actual en un archivo JSON"""
         try:
             state = {
                 "running": self.running,
                 "config": self.config,
                 "captures_count": self.captures_count,
-                "start_time": self.start_time.isoformat() if self.start_time else None
+                "start_timestamp": self.start_time_ts
             }
             with open(STATE_FILE, "w") as f:
                 json.dump(state, f, indent=4)
@@ -43,7 +40,6 @@ class WPlaceServer:
             self.log(f"Error guardando estado: {e}")
 
     def load_state(self):
-        """Carga el estado del disco y reanuda la tarea si estaba activa"""
         if os.path.exists(STATE_FILE):
             try:
                 with open(STATE_FILE, "r") as f:
@@ -51,27 +47,24 @@ class WPlaceServer:
                     self.running = state.get("running", False)
                     self.config = state.get("config", {})
                     self.captures_count = state.get("captures_count", 0)
-                    st = state.get("start_time")
-                    self.start_time = datetime.fromisoformat(st) if st else None
+                    self.start_time_ts = state.get("start_timestamp")
                 
                 if self.running:
-                    self.log("♻️ Tarea interrumpida detectada. Reanudando...")
+                    self.log("♻️ Reanudando tarea detectada...")
                     threading.Thread(target=self.worker, daemon=True).start()
             except Exception as e:
-                self.log(f"Error cargando estado previo: {e}")
+                self.log(f"Error cargando estado: {e}")
 
     def send_telegram(self, message, image_path=None):
         token = self.config.get("tg_token")
         chat_id = self.config.get("tg_chat")
         if not token or not chat_id: return
         try:
-            if image_path:
-                url = f"https://api.telegram.org/bot{token}/sendDocument"
-                with open(image_path, 'rb') as f:
-                    requests.post(url, data={'chat_id': chat_id, 'caption': message, 'parse_mode': 'Markdown'}, files={'document': f})
-            else:
-                url = f"https://api.telegram.org/bot{token}/sendMessage"
-                requests.post(url, data={'chat_id': chat_id, 'text': message, 'parse_mode': 'Markdown'})
+            method = "sendDocument" if image_path else "sendMessage"
+            url = f"https://api.telegram.org/bot{token}/{method}"
+            data = {'chat_id': chat_id, 'caption' if image_path else 'text': message, 'parse_mode': 'Markdown'}
+            files = {'document': open(image_path, 'rb')} if image_path else None
+            requests.post(url, data=data, files=files)
         except Exception as e: self.log(f"Error TG: {e}")
 
     def calculate_diff(self, img1, img2):
@@ -86,17 +79,23 @@ class WPlaceServer:
         if self.config.get('sentry'): modos.append("🛡️ *Centinela*")
         modo_str = " + ".join(modos) if modos else "Ninguno"
         
-        duracion = float(self.config.get('duration_hours', 0))
-        dur_str = f"{duracion}h" if duracion > 0 else "♾️ *Indefinida*"
+        duracion_h = float(self.config.get('duration_hours', 0))
         
-        # Avisar que se ha reanudado o iniciado
-        self.send_telegram(f"🔄 *Sistema Activo*\n\n✅ *Modos:* {modo_str}\n⏱️ *Duración:* {dur_str}\n📦 *Fotos previas:* {self.captures_count}")
+        # Cálculo de tiempo restante al (re)iniciar
+        if duracion_h > 0 and self.start_time_ts:
+            horas_pasadas = (time.time() - self.start_time_ts) / 3600
+            restante = max(0, duracion_h - horas_pasadas)
+            dur_str = f"{duracion_h}h (Faltan: *{restante:.2f}h*)"
+        else:
+            dur_str = "♾️ *Indefinida*"
+
+        self.send_telegram(f"🔄 *Sistema Activo*\n\n✅ *Modos:* {modo_str}\n⏱️ *Tiempo:* {dur_str}\n📦 *Capturas:* {self.captures_count}")
 
         while self.running:
-            if duracion > 0:
-                elapsed = (datetime.now() - self.start_time).total_seconds() / 3600
-                if elapsed >= duracion:
-                    self.send_telegram(f"🏁 *Tarea Finalizada*")
+            if duracion_h > 0:
+                horas_pasadas = (time.time() - self.start_time_ts) / 3600
+                if horas_pasadas >= duracion_h:
+                    self.send_telegram(f"🏁 *Tarea Finalizada*\nEl tiempo ha expirado.")
                     self.running = False
                     self.save_state()
                     break
@@ -110,7 +109,6 @@ class WPlaceServer:
                         tile = Image.open(BytesIO(r.content)).convert("RGBA")
                         full_img.paste(tile, ((tx*1000)-c['x_start'], (ty*1000)-c['y_start']), tile)
 
-                # LÓGICA CENTINELA
                 if self.config.get('sentry'):
                     if self.last_img is None:
                         self.last_img = full_img.copy()
@@ -122,17 +120,15 @@ class WPlaceServer:
                             self.send_telegram(f"⚠️ *¡ATAQUE DETECTADO!*\n📉 Variación: `{diff:.2f}%`", path)
                             self.last_img = full_img.copy()
 
-                # LÓGICA TIMELAPSE
                 if self.config.get('save_timelapse'):
                     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
                     path = os.path.join(DATA_DIR, f"cap_{ts}.png")
                     full_img.save(path, "PNG")
                     self.captures_count += 1
-                    self.save_state() # Guardamos progreso en cada foto
+                    self.save_state()
                     self.log(f"Timelapse: Foto {self.captures_count} guardada")
 
             except Exception as e: self.log(f"Error: {e}")
-            
             time.sleep(self.config.get('interval', 1) * 60)
 
 server = WPlaceServer()
@@ -141,28 +137,40 @@ server = WPlaceServer()
 def start():
     server.config = request.json
     server.running = True
-    server.start_time = datetime.now()
+    server.start_time_ts = time.time() # Guardamos inicio exacto
     server.captures_count = 0
     server.last_img = None
-    server.save_state() # Guardar estado al arrancar
+    server.save_state()
     threading.Thread(target=server.worker, daemon=True).start()
     return jsonify({"status": "ok"})
 
 @app.route('/stop_task', methods=['POST'])
 def stop():
     server.running = False
-    server.save_state() # Guardar estado al detener
+    server.save_state()
     return jsonify({"status": "stopped"})
 
 @app.route('/status', methods=['GET'])
 def status():
+    # Cálculo dinámico para el cliente
     return jsonify({
         "running": server.running, 
         "captures": server.captures_count, 
-        "start_time": server.start_time.isoformat() if server.start_time else None
+        "start_time": datetime.fromtimestamp(server.start_time_ts).isoformat() if server.start_time_ts else None
     })
 
-# ... (Resto de rutas download_zip y clear_data igual) ...
+@app.route('/download_zip')
+def download():
+    zip_p = "data.zip"
+    with zipfile.ZipFile(zip_p, 'w') as z:
+        for f in os.listdir(DATA_DIR): z.write(os.path.join(DATA_DIR, f), f)
+    return send_file(zip_p, as_attachment=True)
+
+@app.route('/clear_data', methods=['POST'])
+def clear():
+    for d in [DATA_DIR, SENTRY_DIR]:
+        for f in os.listdir(d): os.remove(os.path.join(d, f))
+    return jsonify({"status": "cleared"})
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
