@@ -11,6 +11,8 @@ import subprocess
 import platform
 import re
 from datetime import datetime
+import pyperclip
+from PIL import PngImagePlugin
 
 CONFIG_FILE = "client_config.json"
 OUTPUT_FOLDER = "wplace_downloads"
@@ -202,9 +204,34 @@ class WPlaceClient:
 
     def snap_local(self):
         if self.preview_image_raw:
-            if not os.path.exists(OUTPUT_FOLDER): os.makedirs(OUTPUT_FOLDER)
-            path = f"{OUTPUT_FOLDER}/snap_{datetime.now().strftime('%H%M%S')}.png"
-            self.preview_image_raw.save(path); messagebox.showinfo("OK", path); self.abrir_carpeta(OUTPUT_FOLDER)
+            try:
+                if not os.path.exists(OUTPUT_FOLDER): os.makedirs(OUTPUT_FOLDER)
+                path = f"{OUTPUT_FOLDER}/snap_{datetime.now().strftime('%H%M%S')}.png"
+                
+                # 🧠 REPLICAR LÓGICA DE METADATOS EN LOCAL
+                p1_str = self.entry_p1.get()
+                try:
+                    p1_x, p1_y = self.str_to_coords(p1_str)
+                    meta_data = {
+                        "Tl": {"X": p1_x // 1000, "Y": p1_y // 1000},
+                        "Px": {"X": p1_x % 1000, "Y": p1_y % 1000}
+                    }
+                    
+                    meta = PngImagePlugin.PngInfo()
+                    meta.add_text("Description", json.dumps(meta_data, indent=2))
+                    
+                    # Guardar con metadatos
+                    self.preview_image_raw.save(path, "PNG", pnginfo=meta)
+                except:
+                    # Si no hay coordenadas válidas en los campos, guardar sin ellas
+                    self.preview_image_raw.save(path)
+                
+                messagebox.showinfo("OK", f"Captura local guardada con metadatos:\n{path}")
+                self.abrir_carpeta(OUTPUT_FOLDER)
+            except Exception as e:
+                messagebox.showerror("Error", f"No se pudo guardar la captura local: {e}")
+        else:
+            messagebox.showwarning("Ops", "Primero haz una previsualización.")
 
     # --- FAVORITOS ---
     def guardar_fav(self):
@@ -300,22 +327,34 @@ class WPlaceClient:
         f = filedialog.askopenfilename(title="Seleccionar PNG de WPlace", filetypes=[("PNG", "*.png")])
         if f:
             try:
+                # Abrimos la imagen y forzamos la carga de info
                 img = Image.open(f)
-                meta = img.text # Diccionario de metadatos
+                img.load() 
                 
-                # Intentamos leer la etiqueta standard o la custom
-                coords = meta.get("Description") or meta.get("Coordinates") or "Sin datos de coordenadas"
+                # Buscamos en 'text' o en 'info' (Pillow usa ambos según la versión)
+                raw_data = img.info.get("Description") or img.text.get("Description")
                 
-                # Si hay más datos, los mostramos, si no, solo coords
-                msg = f"📁 Archivo: {os.path.basename(f)}\n\n📍 {coords}"
-                
-                # Extra: si hubiera datos viejos
-                if "WPlace_TaskName" in meta:
-                    msg += f"\n🏷️ Tarea: {meta['WPlace_TaskName']}"
+                if raw_data:
+                    try:
+                        # Validamos que sea JSON
+                        json_data = json.loads(raw_data)
+                        formatted_json = json.dumps(json_data, indent=2)
+                        
+                        # 📋 COPIA AUTOMÁTICA AL PORTAPAPELES
+                        import pyperclip
+                        pyperclip.copy(formatted_json)
+                        
+                        messagebox.showinfo("Inspección Forense", 
+                            f"📁 Archivo: {os.path.basename(f)}\n\n"
+                            f"📍 Coordenadas (JSON):\n{formatted_json}\n\n"
+                            "✅ ¡Copiado al portapapeles!")
+                    except json.JSONDecodeError:
+                        messagebox.showwarning("Aviso", "Se encontraron metadatos pero el formato JSON es inválido.")
+                else:
+                    messagebox.showwarning("Aviso", "No se detectaron metadatos en la etiqueta 'Description'.")
+            except Exception as e:
+                messagebox.showerror("Error", f"Fallo al inspeccionar: {e}")
 
-                messagebox.showinfo("Inspección Forense", msg)
-            except Exception as e: messagebox.showerror("Error", str(e))
-            
     def descargar_zip(self, tid=None):
         try:
             url = f"{self.server_ip.get().rstrip('/')}/download_zip" + (f"?task_id={tid}" if tid else "")

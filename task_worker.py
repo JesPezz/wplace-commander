@@ -56,18 +56,25 @@ class TaskWorker:
             except: pass
 
     def save_image_with_metadata(self, img, path):
-        # 🧠 METADATOS LIMPIOS (SOLO COORDENADAS)
-        meta = PngImagePlugin.PngInfo()
+        # 🧠 ESTRUCTURA JSON PURA
         c = self.config['coords']
+        meta_data = {
+            "Tl": {
+                "X": c['x_start'] // 1000,
+                "Y": c['y_start'] // 1000
+            },
+            "Px": {
+                "X": c['x_start'] % 1000,
+                "Y": c['y_start'] % 1000
+            }
+        }
         
-        # Formato solicitado: Solo P1 (Inicio)
-        # Usamos la clave standard 'Description' para máxima compatibilidad
-        coords_simple = f"P1 X: {c['x_start']}, P1 Y: {c['y_start']}"
-        meta.add_text("Description", coords_simple)
+        # Inyección forzada en el chunk tEXt del PNG
+        meta = PngImagePlugin.PngInfo()
+        # Usamos 'Description' como clave estándar
+        meta.add_text("Description", json.dumps(meta_data, indent=2))
         
-        # También lo guardamos en una clave personalizada por si acaso
-        meta.add_text("Coordinates", coords_simple)
-        
+        # Es vital pasar el pnginfo en el save
         img.save(path, "PNG", pnginfo=meta)
 
     def send_telegram(self, title, details, img_path=None):
