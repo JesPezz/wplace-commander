@@ -1,42 +1,101 @@
-# 🍓 WPlace Automation System
+### 📝 Nuevo `README.md` (Versión Pro)
 
-Sistema cliente-servidor para la automatización de capturas de timelapses en WPlace (Pixel Art Canvas).
+Copia y reemplaza el contenido de tu archivo `README.md` por este:
 
-## 🏗 Arquitectura
+---
 
-El proyecto consta de dos módulos principales:
+```markdown
+# 🍓 WPlace Automation System v18.6 (Ultimate)
 
-### 1. Servidor (Raspberry Pi) - `wplace_server.py`
-- Backend ligero basado en **Flask**.
-- Sistema de **persistencia de estado** (sobrevive a reinicios).
-- Descarga de tiles en **paralelo** (Multi-threading).
-- Detección inteligente de cambios (Hashing MD5) para ahorrar espacio.
-- API REST para control remoto.
+Sistema profesional de monitoreo, timelapse y vigilancia centinela para el lienzo de WPlace. Diseñado para ejecutarse en **Raspberry Pi** (Servidor) y controlarse remotamente desde una **PC** (Cliente).
 
-### 2. Cliente (PC) - `wplace_client.py`
-- Interfaz gráfica moderna (**Tkinter**).
-- **Monitor en tiempo real** del estado de la Raspberry Pi.
-- Herramientas de coordenadas y favoritos.
-- Previsualización local antes de lanzar la tarea.
 
-## 🚀 Instalación
 
-### Servidor (Raspberry Pi)
+## 🌟 Características Principales
+
+- **Arquitectura Multitarea:** Monitorea múltiples sectores del lienzo simultáneamente con hilos independientes.
+- **Persistencia Total:** Las tareas sobreviven a reinicios del servidor y cortes de luz, manteniendo el tiempo de ejecución exacto.
+- **Smart Timelapse:** Solo guarda capturas si detecta cambios reales en los píxeles, optimizando el almacenamiento.
+- **Vigilancia Centinela:** Sistema de alertas por Telegram con detección de ataques basada en porcentaje de variación.
+- **Metadatos Forenses:** Las capturas (locales y remotas) incluyen coordenadas en formato JSON dentro de los metadatos PNG para una inspección rápida.
+- **Visor Táctico:** Cliente con zoom, fondo de ajedrez para transparencia y gestión de favoritos.
+
+## 🏗️ Estructura del Proyecto
+
+El sistema se divide en módulos para facilitar la colaboración:
+
+- `wplace_server.py`: Punto de entrada de la API Flask en la Raspberry Pi.
+- `task_manager.py`: El cerebro que gestiona el ciclo de vida de las tareas y los recursos (CPU/RAM).
+- `task_worker.py`: La lógica individual de cada tarea (Descarga, Diff, Telegram, Metadatos).
+- `wplace_client.py`: Interfaz gráfica (Tkinter) para el operador.
+
+## 🚀 Instalación y Despliegue
+
+### 1. Servidor (Raspberry Pi)
+**Requisitos:** Python 3.9+, `Pillow`, `Flask`, `requests`, `psutil`.
+
 ```bash
-pip install -r requirements.txt
-python wplace_server.py
-# Se recomienda usar systemd para ejecución automática
+# Instalar dependencias del sistema
+sudo apt update && sudo apt install python3-psutil python3-pil -y
 
-Cliente (Windows/Linux/Mac)
-Bash
-pip install -r requirements.txt
+# Clonar y ejecutar
+python3 wplace_server.py
+
+```
+
+*Se recomienda configurar el servidor como un servicio de `systemd` usando el archivo `wplace.service` incluido.*
+
+### 2. Cliente (PC Operador)
+
+**Requisitos:** `Pillow`, `requests`, `pyperclip`.
+
+```bash
+pip install pillow requests pyperclip
 python wplace_client.py
 
-🛠 Uso
-1.-Inicia el servidor en la Raspberry Pi.
+```
 
-2.-Abre el cliente en tu PC.
+## 🛠️ Guía del Usuario
 
-3.-Introduce la IP de la Raspberry.
+### Configuración de Tarea
 
-4.-Pega las coordenadas, configura el intervalo y dale a INICIAR.
+1. **Pestaña Misión:** Introduce las coordenadas manualmente o haz clic en el **Visor Táctico**. El formato compatible es el de BlueMarble: `(Tl X: 0, Tl Y: 0, Px X: 0, Px Y: 0)`.
+2. **Lanzamiento:** Configura el intervalo (minutos) y la duración. Dale a **Iniciar Tarea**.
+3. **Radar:** Monitorea en tiempo real el progreso, las fotos tomadas y el tiempo restante.
+
+### Inspección de Evidencia
+
+Si tienes una captura y necesitas saber a qué coordenadas pertenece:
+
+* Ve a la pestaña **Sistema**.
+* Haz clic en **🔍 Inspeccionar Captura**.
+* El sistema leerá el JSON oculto en el PNG y copiará las coordenadas automáticamente a tu portapapeles.
+
+## 👨‍💻 Guía para Desarrolladores
+
+### Formato de Metadatos
+
+El sistema inyecta un chunk `tEXt` bajo la clave `Description` en los archivos PNG con la siguiente estructura:
+
+```json
+{
+  "Tl": { "X": 123, "Y": 45 },
+  "Px": { "X": 500, "Y": 250 }
+}
+
+```
+
+### Endpoints de la API
+
+* `POST /tasks/create`: Registra una nueva configuración.
+* `GET /status`: Devuelve el estado de salud de la RPi y la lista de tareas.
+* `GET /download_zip?task_id=X`: Descarga un paquete estructurado de una tarea específica.
+
+---
+
+© 2026 WPlace Automation Team.
+
+```
+
+---
+
