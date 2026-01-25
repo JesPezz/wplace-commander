@@ -1,5 +1,5 @@
 import tkinter as tk
-from tkinter import messagebox, ttk, simpledialog, Menu
+from tkinter import messagebox, ttk, simpledialog, Menu, filedialog
 from PIL import Image, ImageTk, ImageDraw
 import requests
 from io import BytesIO
@@ -19,15 +19,14 @@ TILE_SERVER = "https://backend.wplace.live/files/s0/tiles"
 class WPlaceClient:
     def __init__(self, root):
         self.root = root
-        self.root.title("WPlace Commander v17.5 (Refined)")
-        self.root.geometry("1250x850")
+        self.root.title("WPlace Commander v18.0 (Final Gold)")
+        self.root.geometry("1280x850")
         
         style = ttk.Style()
         style.theme_use('clam')
         style.configure("Treeview", rowheight=30, font=('Segoe UI', 9))
         style.configure("Treeview.Heading", font=('Segoe UI', 10, 'bold'), background="#d9d9d9")
         
-        # Estilos de botones
         style.configure("Green.TButton", font=('Segoe UI', 9), background="#E8F5E9", foreground="#2E7D32")
         style.configure("Red.TButton", font=('Segoe UI', 9), background="#FFEBEE", foreground="#C62828")
         style.configure("Blue.TButton", font=('Segoe UI', 9), background="#E3F2FD", foreground="#1565C0")
@@ -43,6 +42,7 @@ class WPlaceClient:
         self.preview_image_raw = None
         self.tk_image_ref = None
         self.zoom_level = 1.0
+        self.checker_tile = None 
         
         self.notebook = ttk.Notebook(root)
         self.notebook.pack(fill='both', expand=True, padx=5, pady=5)
@@ -94,11 +94,9 @@ class WPlaceClient:
 
         left = ttk.Frame(paned, width=400); paned.add(left, minsize=380)
         
-        l1 = ttk.LabelFrame(left, text="1. Datos de Misión"); l1.pack(fill='x', padx=5, pady=5)
-        tk.Label(l1, text="IP Rpi:").grid(row=0, column=0, sticky='e'); tk.Entry(l1, textvariable=self.server_ip, width=22).grid(row=0, column=1)
-        tk.Label(l1, text="Nombre:").grid(row=1, column=0, sticky='e')
-        self.task_name = tk.Entry(l1, width=22); self.task_name.grid(row=1, column=1)
-        tk.Label(l1, text="(Auto si vacío)").grid(row=1, column=2, sticky='w', padx=5)
+        l1 = ttk.LabelFrame(left, text="1. Datos"); l1.pack(fill='x', padx=5, pady=5)
+        tk.Label(l1, text="IP:").grid(row=0, column=0, sticky='e'); tk.Entry(l1, textvariable=self.server_ip, width=22).grid(row=0, column=1)
+        tk.Label(l1, text="Nombre:").grid(row=1, column=0, sticky='e'); self.task_name = tk.Entry(l1, width=22); self.task_name.grid(row=1, column=1)
 
         l2 = ttk.LabelFrame(left, text="2. Coordenadas"); l2.pack(fill='x', padx=5, pady=5)
         tk.Label(l2, text="P1:").grid(row=0, column=0); self.entry_p1 = tk.Entry(l2, width=35); self.entry_p1.grid(row=0, column=1, pady=2)
@@ -114,14 +112,10 @@ class WPlaceClient:
         self.chk_time = tk.BooleanVar(value=True); self.chk_sent = tk.BooleanVar(value=False)
         ttk.Checkbutton(l3, text="Timelapse", variable=self.chk_time).grid(row=0, column=0, sticky='w')
         ttk.Checkbutton(l3, text="Centinela", variable=self.chk_sent).grid(row=0, column=1, sticky='w')
-        tk.Label(l3, text="Intervalo (m):").grid(row=1, column=0, sticky='e')
-        self.sp_int = ttk.Spinbox(l3, from_=1, to=120, width=5); self.sp_int.set(1); self.sp_int.grid(row=1, column=1)
-        tk.Label(l3, text="Duración (h):").grid(row=1, column=2, sticky='e')
-        self.sp_dur = ttk.Spinbox(l3, from_=0, to=48, width=5); self.sp_dur.set(0); self.sp_dur.grid(row=1, column=3)
-        tk.Label(l3, text="Límite MB:").grid(row=2, column=0, sticky='e')
-        self.sp_mb = ttk.Spinbox(l3, from_=100, to=5000, width=5); self.sp_mb.set(1000); self.sp_mb.grid(row=2, column=1)
-        tk.Label(l3, text="Alert (%):").grid(row=2, column=2, sticky='e')
-        self.sp_sens = ttk.Spinbox(l3, from_=0.1, to=50, width=5, increment=0.1); self.sp_sens.set(5.0); self.sp_sens.grid(row=2, column=3)
+        tk.Label(l3, text="Min:").grid(row=1, column=0, sticky='e'); self.sp_int = ttk.Spinbox(l3, from_=1, to=120, width=5); self.sp_int.set(1); self.sp_int.grid(row=1, column=1)
+        tk.Label(l3, text="Hrs:").grid(row=1, column=2, sticky='e'); self.sp_dur = ttk.Spinbox(l3, from_=0, to=48, width=5); self.sp_dur.set(0); self.sp_dur.grid(row=1, column=3)
+        tk.Label(l3, text="MB:").grid(row=2, column=0, sticky='e'); self.sp_mb = ttk.Spinbox(l3, from_=100, to=5000, width=5); self.sp_mb.set(1000); self.sp_mb.grid(row=2, column=1)
+        tk.Label(l3, text="Alert:").grid(row=2, column=2, sticky='e'); self.sp_sens = ttk.Spinbox(l3, from_=0.1, to=50, width=5, increment=0.1); self.sp_sens.set(5.0); self.sp_sens.grid(row=2, column=3)
 
         l4 = ttk.LabelFrame(left, text="4. Telegram"); l4.pack(fill='x', padx=5, pady=5)
         self.et_tok = tk.Entry(l4, width=35); self.et_tok.pack(pady=2); self.et_tok.insert(0, self.config.get("tg_token", ""))
@@ -136,18 +130,20 @@ class WPlaceClient:
         ttk.Button(tool, text="➕", width=3, command=lambda: self.zoom(1.2)).pack(side='right', padx=2)
         ttk.Button(tool, text="➖", width=3, command=lambda: self.zoom(0.8)).pack(side='right', padx=2)
 
-        self.canvas = tk.Canvas(right, bg="#303030", cursor="cross")
-        sx = ttk.Scrollbar(right, orient="horizontal", command=self.canvas.xview)
-        sy = ttk.Scrollbar(right, orient="vertical", command=self.canvas.yview)
+        self.canvas = tk.Canvas(right, bg="#202020", cursor="cross")
+        sx = ttk.Scrollbar(right, orient="horizontal", command=self.canvas.xview); sy = ttk.Scrollbar(right, orient="vertical", command=self.canvas.yview)
         self.canvas.configure(xscrollcommand=sx.set, yscrollcommand=sy.set)
         sx.pack(side="bottom", fill="x"); sy.pack(side="right", fill="y"); self.canvas.pack(fill="both", expand=True)
         self.canvas.bind("<Button-1>", self.map_click)
-        self.create_checkerboard()
+        self.prepare_checkerboard()
 
-    def create_checkerboard(self):
-        check = Image.new("RGB", (20, 20), "#404040")
-        d = ImageDraw.Draw(check); d.rectangle([0,0,10,10], fill="#303030"); d.rectangle([10,10,20,20], fill="#303030")
-        self.bg_pattern = ImageTk.PhotoImage(check)
+    def prepare_checkerboard(self):
+        # Crear un tile pequeño para el fondo
+        check = Image.new("RGB", (20, 20), "#CCCCCC")
+        d = ImageDraw.Draw(check)
+        d.rectangle([10,0,20,10], fill="#999999")
+        d.rectangle([0,10,10,20], fill="#999999")
+        self.checker_tile = check # Lo guardamos para generarlo al tamaño necesario
 
     def map_click(self, e):
         cx, cy = self.canvas.canvasx(e.x), self.canvas.canvasy(e.y)
@@ -172,7 +168,7 @@ class WPlaceClient:
                         r = requests.get(f"{TILE_SERVER}/{tx}/{ty}.png", timeout=2)
                         if r.status_code==200: img.paste(Image.open(BytesIO(r.content)).convert("RGBA"), ((tx*1000)-c['x_start'], (ty*1000)-c['y_start']))
                     except: pass
-            self.root.title("WPlace Commander v17.0"); self.preview_image_raw = img; self.zoom_level = 1.0; self.render_image()
+            self.root.title("WPlace Commander v18.0"); self.preview_image_raw = img; self.zoom_level = 1.0; self.render_image()
         except Exception as e: messagebox.showerror("Error", str(e))
 
     def zoom(self, f):
@@ -182,7 +178,26 @@ class WPlaceClient:
     def render_image(self):
         if not self.preview_image_raw: return
         w, h = self.preview_image_raw.size; nw, nh = int(w*self.zoom_level), int(h*self.zoom_level)
-        self.tk_image_ref = ImageTk.PhotoImage(self.preview_image_raw.resize((nw, nh), Image.Resampling.NEAREST))
+        
+        # 1. Generar Fondo Ajedrez al tamaño requerido
+        bg = Image.new("RGB", (nw, nh))
+        # Rellenar con tiles (método rápido: resize de un patrón grande o loop)
+        # Para ser eficiente, creamos patrón de 100x100 y lo copiamos
+        pat = Image.new("RGB", (100, 100))
+        for i in range(0, 100, 20):
+            for j in range(0, 100, 20):
+                pat.paste(self.checker_tile, (i, j))
+        
+        # Tilear el patrón grande
+        for i in range(0, nw, 100):
+            for j in range(0, nh, 100):
+                bg.paste(pat, (i, j))
+        
+        # 2. Pegar imagen transparente encima
+        resized = self.preview_image_raw.resize((nw, nh), Image.Resampling.NEAREST)
+        bg.paste(resized, (0, 0), resized)
+        
+        self.tk_image_ref = ImageTk.PhotoImage(bg)
         self.canvas.delete("all"); self.canvas.config(scrollregion=(0, 0, nw, nh)); self.canvas.create_image(0, 0, image=self.tk_image_ref, anchor="nw")
 
     def snap_local(self):
@@ -191,163 +206,125 @@ class WPlaceClient:
             path = f"{OUTPUT_FOLDER}/snap_{datetime.now().strftime('%H%M%S')}.png"
             self.preview_image_raw.save(path); messagebox.showinfo("OK", path); self.abrir_carpeta(OUTPUT_FOLDER)
 
-    # --- FAVORITOS (Nombre Automático) ---
+    # --- FAVORITOS ---
     def guardar_fav(self):
         n = simpledialog.askstring("Nombre", "Nombre zona:")
         if n: self.config["favorites"][n] = {"p1": self.entry_p1.get(), "p2": self.entry_p2.get()}; self.guardar_config(); self.combo_favs['values'] = list(self.config["favorites"].keys()); self.combo_favs.set(n)
     def del_fav(self):
         n = self.combo_favs.get()
         if n in self.config["favorites"]: del self.config["favorites"][n]; self.guardar_config(); self.combo_favs['values'] = list(self.config["favorites"].keys()); self.combo_favs.set('')
-    
     def cargar_fav(self, e):
-        name = self.combo_favs.get()
-        d = self.config["favorites"].get(name)
-        if d: 
-            self.entry_p1.delete(0, tk.END); self.entry_p1.insert(0, d['p1'])
-            self.entry_p2.delete(0, tk.END); self.entry_p2.insert(0, d['p2'])
-            # Asignar nombre de tarea automático
-            self.task_name.delete(0, tk.END); self.task_name.insert(0, name)
+        name = self.combo_favs.get(); d = self.config["favorites"].get(name)
+        if d: self.entry_p1.delete(0, tk.END); self.entry_p1.insert(0, d['p1']); self.entry_p2.delete(0, tk.END); self.entry_p2.insert(0, d['p2']); self.task_name.delete(0, tk.END); self.task_name.insert(0, name)
 
-    # --- LANZAR ---
     def lanzar(self):
         try:
             p1 = self.str_to_coords(self.entry_p1.get()); p2 = self.str_to_coords(self.entry_p2.get())
             c = {"x_start": min(p1[0], p2[0]), "y_start": min(p1[1], p2[1]), "x_end": max(p1[0], p2[0]), "y_end": max(p1[1], p2[1])}
-            data = {
-                "name": self.task_name.get(), "coords": c, "save_timelapse": self.chk_time.get(), "sentry": self.chk_sent.get(),
-                "interval": int(self.sp_int.get()), "duration_hours": float(self.sp_dur.get()),
-                "limit_mb": int(self.sp_mb.get()), "alert_pct": float(self.sp_sens.get()),
-                "tg_token": self.et_tok.get(), "tg_chat": self.et_chat.get()
-            }
+            data = {"name": self.task_name.get(), "coords": c, "save_timelapse": self.chk_time.get(), "sentry": self.chk_sent.get(), "interval": int(self.sp_int.get()), "duration_hours": float(self.sp_dur.get()), "limit_mb": int(self.sp_mb.get()), "alert_pct": float(self.sp_sens.get()), "tg_token": self.et_tok.get(), "tg_chat": self.et_chat.get()}
             r = requests.post(f"{self.server_ip.get().rstrip('/')}/tasks/create", json=data, timeout=3)
-            if r.status_code==200:
-                tid = r.json()['task_id']; requests.post(f"{self.server_ip.get().rstrip('/')}/tasks/{tid}/start")
-                messagebox.showinfo("OK", f"Tarea '{data['name']}' iniciada (ID {tid})"); self.notebook.select(1); self.guardar_config()
+            if r.status_code==200: tid = r.json()['task_id']; requests.post(f"{self.server_ip.get().rstrip('/')}/tasks/{tid}/start"); messagebox.showinfo("OK", f"Tarea iniciada (ID {tid})"); self.notebook.select(1); self.guardar_config()
             else: messagebox.showerror("Err", r.text)
         except Exception as e: messagebox.showerror("Err", str(e))
 
-    # ================= PESTAÑA 2: RADAR =================
+    # ================= PESTAÑA 2 =================
     def setup_tab_manager(self):
         f = ttk.LabelFrame(self.tab_manager, text="Estado Global"); f.pack(fill='x', padx=10, pady=5)
         self.lbl_cpu = tk.Label(f, text="CPU: --%", fg="blue", font=("Arial", 10, "bold")); self.lbl_cpu.pack(side='left', padx=20)
         self.lbl_ram = tk.Label(f, text="RAM: --%", fg="green", font=("Arial", 10, "bold")); self.lbl_ram.pack(side='left', padx=20)
         
         self.ctx_menu = Menu(self.root, tearoff=0)
-        self.ctx_menu.add_command(label="▶ Reanudar", command=lambda: self.ctx_act("start"))
-        self.ctx_menu.add_command(label="⏸ Pausar/Detener", command=lambda: self.ctx_act("stop"))
-        self.ctx_menu.add_command(label="📥 Descargar Datos", command=self.ctx_down)
+        self.ctx_menu.add_command(label="▶ Reanudar", command=lambda: self.do_act("start"))
+        self.ctx_menu.add_command(label="⏸ Pausar/Detener", command=lambda: self.do_act("stop"))
+        self.ctx_menu.add_command(label="📥 Descargar Datos", command=self.do_down)
         self.ctx_menu.add_separator()
-        self.ctx_menu.add_command(label="🗑 ELIMINAR TAREA", command=lambda: self.ctx_act("delete"))
+        self.ctx_menu.add_command(label="🗑 ELIMINAR TAREA", command=lambda: self.do_act("delete"))
 
         cols = ("ID", "Nombre", "Modos", "Inicio", "Estado", "Fotos", "Restante", "Dif %")
         self.tree = ttk.Treeview(self.tab_manager, columns=cols, show='headings', selectmode='browse')
-        widths = [40, 200, 150, 100, 80, 60, 80, 80]
-        for c, w in zip(cols, widths): self.tree.heading(c, text=c); self.tree.column(c, width=w, anchor="center")
-        self.tree.pack(fill='both', expand=True, padx=10, pady=5)
-        self.tree.bind("<Button-3>", self.show_ctx)
+        for c, w in zip(cols, [40, 200, 150, 100, 80, 60, 80, 80]): self.tree.heading(c, text=c); self.tree.column(c, width=w, anchor="center")
+        self.tree.pack(fill='both', expand=True, padx=10, pady=5); self.tree.bind("<Button-3>", lambda e: (self.tree.selection_set(self.tree.identify_row(e.y)), self.ctx_menu.post(e.x_root, e.y_root)) if self.tree.identify_row(e.y) else None)
 
         bf = ttk.Frame(self.tab_manager); bf.pack(fill='x', padx=10, pady=10)
-        ttk.Button(bf, text="▶ START", style="Green.TButton", command=lambda: self.btn_act("start")).pack(side='left', padx=2)
-        ttk.Button(bf, text="⏸ STOP", style="Blue.TButton", command=lambda: self.btn_act("stop")).pack(side='left', padx=2)
-        ttk.Button(bf, text="📥 ZIP", style="Orange.TButton", command=self.btn_down).pack(side='left', padx=2)
-        ttk.Button(bf, text="🗑 BORRAR", style="Red.TButton", command=lambda: self.btn_act("delete")).pack(side='right', padx=2)
-
-    def show_ctx(self, event):
-        item = self.tree.identify_row(event.y)
-        if item: self.tree.selection_set(item); self.ctx_menu.post(event.x_root, event.y_root)
-
-    def ctx_act(self, act): self.do_act(act)
-    def btn_act(self, act): self.do_act(act)
-    def ctx_down(self): self.do_down()
-    def btn_down(self): self.do_down()
+        ttk.Button(bf, text="▶ START", style="Green.TButton", command=lambda: self.do_act("start")).pack(side='left', padx=2)
+        ttk.Button(bf, text="⏸ STOP", style="Blue.TButton", command=lambda: self.do_act("stop")).pack(side='left', padx=2)
+        ttk.Button(bf, text="📥 ZIP", style="Orange.TButton", command=self.do_down).pack(side='left', padx=2)
+        ttk.Button(bf, text="🗑 BORRAR", style="Red.TButton", command=lambda: self.do_act("delete")).pack(side='right', padx=2)
 
     def do_act(self, act):
         sel = self.tree.selection()
-        if sel:
-            tid = self.tree.item(sel[0])['values'][0]
-            try: requests.post(f"{self.server_ip.get().rstrip('/')}/tasks/{tid}/{act}", timeout=2); self.refresh()
+        if sel: 
+            try: requests.post(f"{self.server_ip.get().rstrip('/')}/tasks/{self.tree.item(sel[0])['values'][0]}/{act}", timeout=2); self.refresh()
             except: pass
-    
     def do_down(self):
-        sel = self.tree.selection()
+        sel = self.tree.selection(); 
         if sel: self.descargar_zip(self.tree.item(sel[0])['values'][0])
 
     def monitor_loop(self):
-        while self.running:
-            try: self.refresh()
+        while self.running: 
+            try: self.refresh() 
             except: pass
             time.sleep(2)
 
     def refresh(self):
-        try:
-            r = requests.get(f"{self.server_ip.get().rstrip('/')}/status", timeout=2)
-            if r.status_code == 200: self.root.after(0, lambda: self.upd_ui(r.json()))
-        except: pass
+        r = requests.get(f"{self.server_ip.get().rstrip('/')}/status", timeout=2)
+        if r.status_code == 200: self.root.after(0, lambda: self.upd_ui(r.json()))
 
     def upd_ui(self, d):
-        # 1. RECORDAR SELECCIÓN
-        selected_id = None
-        sel = self.tree.selection()
-        if sel: selected_id = self.tree.item(sel[0])['values'][0]
-
-        # 2. ACTUALIZAR UI
-        self.lbl_cpu.config(text=f"CPU: {d['system']['cpu']}%")
-        self.lbl_ram.config(text=f"RAM: {d['system']['ram']}%")
-        
+        sid = None; sel = self.tree.selection()
+        if sel: sid = self.tree.item(sel[0])['values'][0]
+        self.lbl_cpu.config(text=f"CPU: {d['system']['cpu']}%"); self.lbl_ram.config(text=f"RAM: {d['system']['ram']}%")
         for r in self.tree.get_children(): self.tree.delete(r)
-        
         for t in d['tasks']:
-            m_full = []
-            if "T" in t['mode']: m_full.append("Timelapse")
-            if "S" in t['mode']: m_full.append("Centinela")
-            mode_str = " + ".join(m_full) if m_full else "Inactivo"
-            
-            tag = 'run' if t['status']=='running' else 'stop'
+            m = []
+            if "T" in t['mode']: m.append("Timelapse")
+            if "S" in t['mode']: m.append("Centinela")
+            tag = 'run' if t['status']=='running' else 'stop'; 
             if t['status']=='error': tag='err'
-            
-            item = self.tree.insert("", "end", values=(
-                t['id'], t['name'], mode_str, t.get('start_str', '--:--'), 
-                t['status'].upper(), t['captures'], t['restante'], t['diff_actual']
-            ), tags=(tag,))
-            
-            # 3. RESTAURAR SELECCIÓN
-            if str(t['id']) == str(selected_id):
-                self.tree.selection_set(item)
-
-        self.tree.tag_configure('run', foreground='green')
-        self.tree.tag_configure('err', foreground='red')
+            item = self.tree.insert("", "end", values=(t['id'], t['name'], " + ".join(m) or "Inactivo", t.get('start_str'), t['status'].upper(), t['captures'], t['restante'], t['diff_actual']), tags=(tag,))
+            if str(t['id']) == str(sid): self.tree.selection_set(item)
+        self.tree.tag_configure('run', foreground='green'); self.tree.tag_configure('err', foreground='red')
 
     # ================= PESTAÑA 3: SISTEMA =================
     def setup_tab_system(self):
         f = ttk.LabelFrame(self.tab_system, text="Gestión Global"); f.pack(fill='both', padx=20, pady=20)
+        ttk.Button(f, text="🔍 INSPECCIONAR CAPTURA (Ver Coordenadas)", style="Accent.TButton", command=self.inspect_file).pack(pady=10, fill='x')
+        ttk.Button(f, text="📥 DESCARGAR BACKUP COMPLETO", style="Orange.TButton", command=lambda: self.descargar_zip(None)).pack(pady=10, fill='x')
+        ttk.Button(f, text="📂 ABRIR CARPETA LOCAL", style="Blue.TButton", command=lambda: self.abrir_carpeta(OUTPUT_FOLDER)).pack(pady=10, fill='x')
         
-        ttk.Button(f, text="📥 DESCARGAR BACKUP COMPLETO", style="Accent.TButton", command=lambda: self.descargar_zip(None)).pack(pady=10, fill='x')
-        ttk.Button(f, text="📂 ABRIR CARPETA DESCARGAS", style="Orange.TButton", command=lambda: self.abrir_carpeta(OUTPUT_FOLDER)).pack(pady=10, fill='x')
-        ttk.Button(f, text="🧹 FORMATEAR SERVIDOR", style="Warning.TButton", command=self.vaciar_server).pack(pady=10, fill='x')
-        
-        f2 = ttk.LabelFrame(self.tab_system, text="Emergencia"); f2.pack(fill='x', padx=20, pady=20)
-        ttk.Button(f2, text="🛑 APAGADO DE EMERGENCIA", style="Danger.TButton", command=self.stop_all).pack(pady=10)
+        f2 = ttk.LabelFrame(self.tab_system, text="Zona de Peligro"); f2.pack(fill='x', padx=20, pady=20)
+        ttk.Button(f2, text="🧹 ELIMINAR TODAS LAS TAREAS (Config)", style="Warning.TButton", command=self.del_all_tasks).pack(side='left', expand=True, padx=5, pady=10)
+        ttk.Button(f2, text="🔥 ELIMINAR TODAS LAS FOTOS (Archivos)", style="Red.TButton", command=self.del_all_photos).pack(side='right', expand=True, padx=5, pady=10)
+
+    def inspect_file(self):
+        f = filedialog.askopenfilename(title="Seleccionar PNG de WPlace", filetypes=[("PNG", "*.png")])
+        if f:
+            try:
+                img = Image.open(f)
+                meta = img.text # Diccionario de metadatos
+                coords = meta.get("WPlace_Coords", "No encontrado")
+                tid = meta.get("WPlace_TaskID", "?")
+                name = meta.get("WPlace_TaskName", "?")
+                messagebox.showinfo("Inspección Forense", f"📁 Archivo: {os.path.basename(f)}\n\n📍 Coordenadas:\n{coords}\n\n🤖 Tarea ID: {tid}\n🏷️ Nombre: {name}")
+            except Exception as e: messagebox.showerror("Error", str(e))
 
     def descargar_zip(self, tid=None):
         try:
-            url = f"{self.server_ip.get().rstrip('/')}/download_zip"
-            if tid: url += f"?task_id={tid}"
+            url = f"{self.server_ip.get().rstrip('/')}/download_zip" + (f"?task_id={tid}" if tid else "")
             r = requests.get(url, stream=True)
             if r.status_code==200:
                 if not os.path.exists(OUTPUT_FOLDER): os.makedirs(OUTPUT_FOLDER)
-                name = f"task_{tid}" if tid else "backup_completo"
-                path = f"{OUTPUT_FOLDER}/{name}_{datetime.now().strftime('%H%M%S')}.zip"
-                with open(path, 'wb') as f: 
+                p = f"{OUTPUT_FOLDER}/{f'task_{tid}' if tid else 'full'}_{datetime.now().strftime('%H%M%S')}.zip"
+                with open(p, 'wb') as f: 
                     for chunk in r.iter_content(8192): f.write(chunk)
-                messagebox.showinfo("Descarga", f"Guardado:\n{path}"); self.abrir_carpeta(OUTPUT_FOLDER)
-        except Exception as e: messagebox.showerror("Err", str(e))
+                messagebox.showinfo("OK", p); self.abrir_carpeta(OUTPUT_FOLDER)
+        except Exception as e: messagebox.showerror("Error", str(e))
 
-    def stop_all(self):
-        if messagebox.askyesno("Confirmar", "Detener todo?"): requests.post(f"{self.server_ip.get().rstrip('/')}/stop_all")
-    def vaciar_server(self):
-        if messagebox.askyesno("PELIGRO", "¿Borrar TODAS las tareas y fotos?"): 
-            requests.post(f"{self.server_ip.get().rstrip('/')}/clear_all")
-            messagebox.showinfo("Listo", "Servidor limpio.")
+    def del_all_tasks(self): 
+        if messagebox.askyesno("CONFIRMAR", "¿Borrar TODAS las tareas de la lista? (Las fotos quedan guardadas)"): requests.post(f"{self.server_ip.get().rstrip('/')}/delete_tasks")
+    def del_all_photos(self): 
+        if messagebox.askyesno("PELIGRO", "¿Borrar TODAS las fotos del disco? (Esto es irreversible)"): requests.post(f"{self.server_ip.get().rstrip('/')}/delete_photos")
+    def stop_all(self): requests.post(f"{self.server_ip.get().rstrip('/')}/stop_all")
 
 if __name__ == "__main__":
     root = tk.Tk()

@@ -1,6 +1,6 @@
 import os, time, json, requests, threading
 from datetime import datetime
-from PIL import Image
+from PIL import Image, PngImagePlugin
 from io import BytesIO
 
 class TaskWorker:
@@ -55,15 +55,24 @@ class TaskWorker:
                         self.log(f"Memoria visual cargada: {path}")
             except: pass
 
+    def save_image_with_metadata(self, img, path):
+        # 🧠 INYECCIÓN DE METADATOS FORENSES
+        meta = PngImagePlugin.PngInfo()
+        # Guardamos las coordenadas para poder recuperarlas después con "Inspeccionar"
+        c = self.config['coords']
+        coords_str = f"Tl X: {c['x_start']//1000}, Tl Y: {c['y_start']//1000}, Px X: {c['x_start']%1000}, Px Y: {c['y_start']%1000}"
+        meta.add_text("WPlace_Coords", coords_str)
+        meta.add_text("WPlace_TaskID", str(self.id))
+        meta.add_text("WPlace_TaskName", self.config.get('name', 'Unknown'))
+        
+        img.save(path, "PNG", pnginfo=meta)
+
     def send_telegram(self, title, details, img_path=None):
         token = self.config.get("tg_token")
         chat_id = self.config.get("tg_chat")
         if not token or not chat_id: return
         
-        # CÁLCULOS PARA NOTIFICACIÓN
         start_str = datetime.fromtimestamp(self.start_time_ts).strftime('%H:%M') if self.start_time_ts else "--:--"
-        
-        # Tiempo Restante
         dur = float(self.config.get('duration_hours', 0))
         restante_str = "♾️ Infinito"
         if dur > 0 and self.start_time_ts:
@@ -84,7 +93,6 @@ class TaskWorker:
             f"📦 *Capturas:* {self.captures_count}\n"
             f"{details}"
         )
-        
         try:
             url = f"https://api.telegram.org/bot{token}/{'sendDocument' if img_path else 'sendMessage'}"
             data = {'chat_id': chat_id, 'caption' if img_path else 'text': caption, 'parse_mode': 'Markdown'}
@@ -116,14 +124,11 @@ class TaskWorker:
         self.running = True
         self.status = "running"
         if not self.start_time_ts: self.start_time_ts = time.time()
-        
         self.log("INICIANDO LOOP")
         self.send_telegram("🚀 *Iniciada*", "El sistema está monitoreando el objetivo.")
 
         while self.running:
-            if self.paused:
-                self.status = "paused"; time.sleep(1); continue
-            
+            if self.paused: self.status = "paused"; time.sleep(1); continue
             dur = float(self.config.get('duration_hours', 0))
             if dur > 0 and (time.time() - self.start_time_ts)/3600 >= dur:
                 self.stop(); self.send_telegram("🏁 *Finalizada*", "Tiempo cumplido."); break
@@ -131,24 +136,23 @@ class TaskWorker:
             try:
                 limit_mb = float(self.config.get('limit_mb', 1000))
                 current_mb = sum(os.path.getsize(os.path.join(self.data_dir, f)) for f in os.listdir(self.data_dir)) / (1024*1024)
-                if current_mb > limit_mb:
-                     self.stop(); self.send_telegram("🛑 *Detenida*", "Límite de almacenamiento excedido."); break
+                if current_mb > limit_mb: self.stop(); self.send_telegram("🛑 *Detenida*", "Límite de MB excedido."); break
 
                 self.log("Descargando...")
                 current = self.download_area()
 
                 if self.config.get('sentry'):
-                    sensibilidad = float(self.config.get('alert_pct', 5.0))
+                    sens = float(self.config.get('alert_pct', 5.0))
                     if self.last_img is None: self.last_img = current.copy()
                     else:
                         diff = self.calculate_diff(self.last_img, current)
                         self.current_diff = diff
-                        if diff >= sensibilidad:
+                        if diff >= sens:
                             path = os.path.join(self.sentry_dir, f"alert_{self.id}.png")
-                            current.save(path, "PNG")
-                            self.send_telegram("⚠️ *¡ATAQUE DETECTADO!*", f"📉 Variación: `{diff:.2f}%` (Umbral: {sensibilidad}%)", path)
+                            self.save_image_with_metadata(current, path)
+                            self.send_telegram("⚠️ *¡ATAQUE DETECTADO!*", f"📉 Variación: `{diff:.2f}%`", path)
                             self.last_img = current.copy()
-                            self.log(f"ALERTA enviada. Dif: {diff}%")
+                            self.log(f"ALERTA. Dif: {diff}%")
 
                 if self.config.get('save_timelapse'):
                     should_save = False
@@ -161,15 +165,14 @@ class TaskWorker:
                     if should_save:
                         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
                         path = os.path.join(self.data_dir, f"cap_{self.id}_{ts}.png")
-                        current.save(path, "PNG")
+                        self.save_image_with_metadata(current, path)
                         self.last_saved_img = current.copy()
                         self.last_saved_path = path
                         self.captures_count += 1
                         self.save_persistence()
                         self.log(f"Guardado: {path}")
 
-            except Exception as e: self.log(f"Error Crítico: {e}"); self.status = "error"
-
+            except Exception as e: self.log(f"Error: {e}"); self.status = "error"
             time.sleep(self.config.get('interval', 1) * 60)
 
     def start(self): threading.Thread(target=self.run_loop, daemon=True).start()
@@ -179,11 +182,9 @@ class TaskWorker:
         dur = float(self.config.get('duration_hours', 0))
         rest = "Inf"
         if dur > 0 and self.start_time_ts: rest = f"{max(0, dur - (time.time()-self.start_time_ts)/3600):.2f}h"
-        
         m = []
         if self.config.get('save_timelapse'): m.append("T")
         if self.config.get('sentry'): m.append("S")
-        
         return {
             "id": self.id, "name": self.config.get("name"), "mode": "+".join(m),
             "status": self.status, "captures": self.captures_count,
