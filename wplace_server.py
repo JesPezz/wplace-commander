@@ -21,11 +21,14 @@ class WPlaceServer:
         self.start_time_ts = None
         self.captures_count = 0
         self.last_img = None  # Referencia para Centinela
-        self.last_saved_timelapse_img = None # Referencia para Timelapse
+        
+        # Referencias para Timelapse
+        self.last_saved_timelapse_img = None 
+        self.last_saved_path = None # Ruta física del último archivo
+        
         self.load_state()
 
     def log(self, msg):
-        # Forzamos flush para ver los logs en tiempo real en journalctl
         timestamp = datetime.now().strftime('%H:%M:%S')
         print(f"[{timestamp}] {msg}", flush=True)
 
@@ -35,7 +38,9 @@ class WPlaceServer:
                 "running": self.running,
                 "config": self.config,
                 "captures_count": self.captures_count,
-                "start_timestamp": self.start_time_ts
+                "start_timestamp": self.start_time_ts,
+                # Guardamos la ruta de la última foto válida
+                "last_saved_path": self.last_saved_path
             }
             with open(STATE_FILE, "w") as f:
                 json.dump(state, f, indent=4)
@@ -51,9 +56,20 @@ class WPlaceServer:
                     self.config = state.get("config", {})
                     self.captures_count = state.get("captures_count", 0)
                     self.start_time_ts = state.get("start_timestamp")
+                    
+                    # RECUPERACIÓN DE MEMORIA VISUAL
+                    last_path = state.get("last_saved_path")
+                    if last_path and os.path.exists(last_path):
+                        try:
+                            # Cargamos la imagen del disco a la RAM para comparar
+                            self.last_saved_timelapse_img = Image.open(last_path).convert("RGBA")
+                            self.last_saved_path = last_path
+                            self.log(f"👁️ Memoria visual recuperada: {last_path}")
+                        except:
+                            self.log("⚠️ No se pudo cargar la imagen previa. Se creará una nueva.")
                 
                 if self.running:
-                    self.log("♻️ REANUDANDO TAREA DETECTADA TRAS REINICIO")
+                    self.log("♻️ REANUDANDO TAREA TRAS REINICIO")
                     threading.Thread(target=self.worker, daemon=True).start()
             except Exception as e:
                 self.log(f"Error cargando estado: {e}")
@@ -90,25 +106,21 @@ class WPlaceServer:
         return full_img
 
     def worker(self):
-        self.log(">>> INICIANDO HILO DE TRABAJO (WORKER)")
+        self.log(">>> WORKER INICIADO")
         
-        # 1. Definición de Modos
         modos = []
         if self.config.get('save_timelapse'): modos.append("📷 *Timelapse*")
         if self.config.get('sentry'): modos.append("🛡️ *Centinela*")
         modo_str = " + ".join(modos) if modos else "Ninguno"
         
-        # 2. Cálculo de Tiempo (RECUPERADO)
         duracion_h = float(self.config.get('duration_hours', 0))
         if duracion_h > 0 and self.start_time_ts:
-            # Usamos TimeStamp para precisión absoluta post-reinicio
             horas_pasadas = (time.time() - self.start_time_ts) / 3600
             restante = max(0, duracion_h - horas_pasadas)
             dur_str = f"{duracion_h}h (Faltan: *{restante:.2f}h*)"
         else:
             dur_str = "♾️ *Indefinida*"
 
-        # 3. Envío de Mensaje Completo
         msg = (
             f"🔄 *Sistema Activo*\n"
             f"🔹 *Modos:* {modo_str}\n"
@@ -119,7 +131,6 @@ class WPlaceServer:
         self.log(f"Status enviado. Tiempo: {dur_str}")
 
         while self.running:
-            # Check Tiempo
             if duracion_h > 0 and self.start_time_ts:
                 horas_pasadas = (time.time() - self.start_time_ts) / 3600
                 if horas_pasadas >= duracion_h:
@@ -130,7 +141,7 @@ class WPlaceServer:
                 self.log("Descargando lienzo actual...")
                 current_img = self.download_area(self.config['coords'])
 
-                # --- 🛡️ LÓGICA CENTINELA (FIXED) ---
+                # --- 🛡️ CENTINELA ---
                 if self.config.get('sentry'):
                     if self.last_img is None:
                         self.last_img = current_img.copy()
@@ -138,24 +149,24 @@ class WPlaceServer:
                     else:
                         diff = self.calculate_diff(self.last_img, current_img)
                         self.log(f"Centinela: Dif = {diff:.4f}%")
-                        
                         if diff >= self.config.get('alert_pct', 5.0):
-                            self.log(f"⚠️ ¡ATAQUE DETECTADO! Variación: {diff:.2f}%")
                             path = os.path.join(SENTRY_DIR, "alert.png")
                             current_img.save(path, "PNG")
                             self.send_telegram(f"⚠️ *¡ATAQUE DETECTADO!*\n📉 Variación: `{diff:.2f}%`", path)
-                            # ACTUALIZAMOS BASE PARA NO REPETIR ALERTA
                             self.last_img = current_img.copy()
 
-                # --- 📷 LÓGICA TIMELAPSE (SMART) ---
+                # --- 📷 TIMELAPSE PERSISTENTE ---
                 if self.config.get('save_timelapse'):
                     should_save = False
+                    
+                    # CASO 1: No hay imagen en memoria (Reinicio sin historial o primera vez real)
                     if self.last_saved_timelapse_img is None:
                         should_save = True
-                        self.log("Timelapse: Primera foto.")
+                        self.log("Timelapse: Primera foto (Sin referencia previa).")
+                    
+                    # CASO 2: Tenemos imagen en memoria (Recuperada del disco o del ciclo anterior)
                     else:
                         diff_t = self.calculate_diff(self.last_saved_timelapse_img, current_img)
-                        # Umbral mínimo para evitar basura
                         if diff_t > 0.0001: 
                             should_save = True
                             self.log(f"Timelapse: Cambio detectado ({diff_t:.4f}%)")
@@ -166,9 +177,13 @@ class WPlaceServer:
                         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
                         path = os.path.join(DATA_DIR, f"cap_{ts}.png")
                         current_img.save(path, "PNG")
+                        
+                        # Actualizamos referencias
                         self.last_saved_timelapse_img = current_img.copy()
+                        self.last_saved_path = path # Guardamos la ruta para el futuro
                         self.captures_count += 1
-                        self.save_state()
+                        
+                        self.save_state() # Esto guarda 'last_saved_path' en el JSON
                         self.log(f"✅ TIMELAPSE GUARDADO: {path}")
 
             except Exception as e:
@@ -189,6 +204,7 @@ def start():
     server.captures_count = 0
     server.last_img = None
     server.last_saved_timelapse_img = None
+    server.last_saved_path = None
     server.save_state()
     threading.Thread(target=server.worker, daemon=True).start()
     return jsonify({"status": "ok"})
