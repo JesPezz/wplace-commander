@@ -25,7 +25,7 @@ class WPlaceServer:
         self.load_state()
 
     def log(self, msg):
-        # Forzamos a que el mensaje aparezca en journalctl inmediatamente
+        # Forzamos flush para ver los logs en tiempo real en journalctl
         timestamp = datetime.now().strftime('%H:%M:%S')
         print(f"[{timestamp}] {msg}", flush=True)
 
@@ -72,7 +72,6 @@ class WPlaceServer:
 
     def calculate_diff(self, img1, img2):
         if img1.size != img2.size: return 100.0
-        # Comparamos en RGB para máxima precisión
         i1, i2 = img1.convert("RGB"), img2.convert("RGB")
         pairs = zip(i1.getdata(), i2.getdata())
         dif = sum(abs(c1-c2) for p1,p2 in pairs for c1,c2 in zip(p1,p2))
@@ -92,13 +91,35 @@ class WPlaceServer:
 
     def worker(self):
         self.log(">>> INICIANDO HILO DE TRABAJO (WORKER)")
-        duracion_h = float(self.config.get('duration_hours', 0))
         
-        # Reporte de inicio
-        self.send_telegram(f"🔄 *Sistema Activo*\n📦 Capturas previas: {self.captures_count}")
+        # 1. Definición de Modos
+        modos = []
+        if self.config.get('save_timelapse'): modos.append("📷 *Timelapse*")
+        if self.config.get('sentry'): modos.append("🛡️ *Centinela*")
+        modo_str = " + ".join(modos) if modos else "Ninguno"
+        
+        # 2. Cálculo de Tiempo (RECUPERADO)
+        duracion_h = float(self.config.get('duration_hours', 0))
+        if duracion_h > 0 and self.start_time_ts:
+            # Usamos TimeStamp para precisión absoluta post-reinicio
+            horas_pasadas = (time.time() - self.start_time_ts) / 3600
+            restante = max(0, duracion_h - horas_pasadas)
+            dur_str = f"{duracion_h}h (Faltan: *{restante:.2f}h*)"
+        else:
+            dur_str = "♾️ *Indefinida*"
+
+        # 3. Envío de Mensaje Completo
+        msg = (
+            f"🔄 *Sistema Activo*\n"
+            f"🔹 *Modos:* {modo_str}\n"
+            f"⏱️ *Tiempo:* {dur_str}\n"
+            f"📦 *Capturas previas:* {self.captures_count}"
+        )
+        self.send_telegram(msg)
+        self.log(f"Status enviado. Tiempo: {dur_str}")
 
         while self.running:
-            # 1. Control de tiempo
+            # Check Tiempo
             if duracion_h > 0 and self.start_time_ts:
                 horas_pasadas = (time.time() - self.start_time_ts) / 3600
                 if horas_pasadas >= duracion_h:
@@ -106,11 +127,10 @@ class WPlaceServer:
                     self.running = False; self.save_state(); break
 
             try:
-                # 2. Captura
                 self.log("Descargando lienzo actual...")
                 current_img = self.download_area(self.config['coords'])
 
-                # 3. Lógica Centinela
+                # --- 🛡️ LÓGICA CENTINELA (FIXED) ---
                 if self.config.get('sentry'):
                     if self.last_img is None:
                         self.last_img = current_img.copy()
@@ -118,24 +138,29 @@ class WPlaceServer:
                     else:
                         diff = self.calculate_diff(self.last_img, current_img)
                         self.log(f"Centinela: Dif = {diff:.4f}%")
+                        
                         if diff >= self.config.get('alert_pct', 5.0):
+                            self.log(f"⚠️ ¡ATAQUE DETECTADO! Variación: {diff:.2f}%")
                             path = os.path.join(SENTRY_DIR, "alert.png")
                             current_img.save(path, "PNG")
-                            self.send_telegram(f"⚠️ *¡ATAQUE!* Dif: `{diff:.2f}%`", path)
+                            self.send_telegram(f"⚠️ *¡ATAQUE DETECTADO!*\n📉 Variación: `{diff:.2f}%`", path)
+                            # ACTUALIZAMOS BASE PARA NO REPETIR ALERTA
                             self.last_img = current_img.copy()
 
-                # 4. Lógica Timelapse Inteligente
+                # --- 📷 LÓGICA TIMELAPSE (SMART) ---
                 if self.config.get('save_timelapse'):
                     should_save = False
                     if self.last_saved_timelapse_img is None:
                         should_save = True
-                        self.log("Timelapse: Primera foto de la sesión.")
+                        self.log("Timelapse: Primera foto.")
                     else:
                         diff_t = self.calculate_diff(self.last_saved_timelapse_img, current_img)
-                        self.log(f"Timelapse: Comparando... Dif = {diff_t:.4f}%")
-                        # Umbral de seguridad para capturar incluso 1 solo pixel
-                        if diff_t > 0.00001: 
+                        # Umbral mínimo para evitar basura
+                        if diff_t > 0.0001: 
                             should_save = True
+                            self.log(f"Timelapse: Cambio detectado ({diff_t:.4f}%)")
+                        else:
+                            self.log("💤 Timelapse: Sin cambios significativos.")
 
                     if should_save:
                         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -144,16 +169,14 @@ class WPlaceServer:
                         self.last_saved_timelapse_img = current_img.copy()
                         self.captures_count += 1
                         self.save_state()
-                        self.log(f"✅ TIMELAPSE GUARDADO: {path} (Conteo: {self.captures_count})")
-                    else:
-                        self.log("💤 Timelapse: Sin cambios. No se guarda nada.")
+                        self.log(f"✅ TIMELAPSE GUARDADO: {path}")
 
             except Exception as e:
-                self.log(f"❌ ERROR EN CICLO: {e}")
+                self.log(f"❌ ERROR: {e}")
 
             time.sleep(self.config.get('interval', 1) * 60)
         
-        self.log(">>> HILO DE TRABAJO FINALIZADO")
+        self.log(">>> HILO FINALIZADO")
 
 server = WPlaceServer()
 
@@ -199,5 +222,4 @@ def clear():
     return jsonify({"status": "cleared"})
 
 if __name__ == '__main__':
-    # host='0.0.0.0' para que acepte conexiones externas
     app.run(host='0.0.0.0', port=5000, debug=False)
