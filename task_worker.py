@@ -56,25 +56,13 @@ class TaskWorker:
             except: pass
 
     def save_image_with_metadata(self, img, path):
-        # 🧠 ESTRUCTURA JSON PURA
         c = self.config['coords']
         meta_data = {
-            "Tl": {
-                "X": c['x_start'] // 1000,
-                "Y": c['y_start'] // 1000
-            },
-            "Px": {
-                "X": c['x_start'] % 1000,
-                "Y": c['y_start'] % 1000
-            }
+            "Tl": {"X": c['x_start'] // 1000, "Y": c['y_start'] // 1000},
+            "Px": {"X": c['x_start'] % 1000, "Y": c['y_start'] % 1000}
         }
-        
-        # Inyección forzada en el chunk tEXt del PNG
         meta = PngImagePlugin.PngInfo()
-        # Usamos 'Description' como clave estándar
         meta.add_text("Description", json.dumps(meta_data, indent=2))
-        
-        # Es vital pasar el pnginfo en el save
         img.save(path, "PNG", pnginfo=meta)
 
     def send_telegram(self, title, details, img_path=None):
@@ -94,8 +82,11 @@ class TaskWorker:
         if self.config.get('save_timelapse'): modos.append("📷 Timelapse")
         if self.config.get('sentry'): modos.append("🛡️ Centinela")
         
+        # Agregamos la fuente al mensaje
+        src = self.config.get('source', 'WPlace')
+
         caption = (
-            f"🤖 *Tarea {self.id}: {self.config.get('name')}*\n"
+            f"🤖 *Tarea {self.id} ({src}): {self.config.get('name')}*\n"
             f"{title}\n\n"
             f"⚙️ *Modos:* {' + '.join(modos)}\n"
             f"🕒 *Inicio:* {start_str}\n"
@@ -119,26 +110,36 @@ class TaskWorker:
 
     def download_area(self):
         c = self.config['coords']
+        
+        # 🧠 SELECCIÓN DINÁMICA DE FUENTE
+        source_target = self.config.get('source', 'WPlace') # Default por compatibilidad
+        if source_target == 'BPlace':
+            base_url = "https://bplace.org/files/s0/tiles"
+        else:
+            base_url = "https://backend.wplace.live/files/s0/tiles"
+
         w, h = c['x_end']-c['x_start'], c['y_end']-c['y_start']
         full_img = Image.new("RGBA", (w, h))
         tx_s, tx_e = c['x_start']//1000, (c['x_end']-1)//1000
         ty_s, ty_e = c['y_start']//1000, (c['y_end']-1)//1000
         for tx in range(tx_s, tx_e + 1):
             for ty in range(ty_s, ty_e + 1):
-                r = requests.get(f"https://backend.wplace.live/files/s0/tiles/{tx}/{ty}.png", timeout=10)
-                tile = Image.open(BytesIO(r.content)).convert("RGBA")
-                full_img.paste(tile, ((tx*1000)-c['x_start'], (ty*1000)-c['y_start']), tile)
+                url = f"{base_url}/{tx}/{ty}.png"
+                try:
+                    headers = {'User-Agent': 'Mozilla/5.0'}
+                    r = requests.get(url, headers=headers, timeout=10)
+                    if r.status_code == 200:
+                        tile = Image.open(BytesIO(r.content)).convert("RGBA")
+                        full_img.paste(tile, ((tx*1000)-c['x_start'], (ty*1000)-c['y_start']), tile)
+                except: pass
         return full_img
 
     def run_loop(self):
         self.running = True
         self.status = "running"
-        
-        # 🧠 FIX DE PERSISTENCIA TEMPORAL
-        # Si no había tiempo guardado, lo creamos Y LO GUARDAMOS INMEDIATAMENTE
         if not self.start_time_ts: 
             self.start_time_ts = time.time()
-            self.save_persistence() # Guardar en disco AHORA MISMO
+            self.save_persistence()
         
         self.log("INICIANDO LOOP")
         self.send_telegram("🚀 *Iniciada*", "El sistema está monitoreando el objetivo.")
@@ -150,9 +151,7 @@ class TaskWorker:
                 self.stop(); self.send_telegram("🏁 *Finalizada*", "Tiempo cumplido."); break
 
             try:
-                # Guardamos persistencia en cada ciclo para asegurar que el tiempo no se pierda si hay corte de luz
                 self.save_persistence()
-
                 limit_mb = float(self.config.get('limit_mb', 1000))
                 current_mb = sum(os.path.getsize(os.path.join(self.data_dir, f)) for f in os.listdir(self.data_dir)) / (1024*1024)
                 if current_mb > limit_mb: self.stop(); self.send_telegram("🛑 *Detenida*", "Límite de MB excedido."); break
@@ -188,7 +187,7 @@ class TaskWorker:
                         self.last_saved_img = current.copy()
                         self.last_saved_path = path
                         self.captures_count += 1
-                        self.save_persistence() # Guardar estado tras captura
+                        self.save_persistence()
                         self.log(f"Guardado: {path}")
 
             except Exception as e: self.log(f"Error: {e}"); self.status = "error"
@@ -205,7 +204,9 @@ class TaskWorker:
         if self.config.get('save_timelapse'): m.append("T")
         if self.config.get('sentry'): m.append("S")
         return {
-            "id": self.id, "name": self.config.get("name"), "mode": "+".join(m),
+            "id": self.id, "name": self.config.get("name"), 
+            "source": self.config.get('source', 'WPlace'), # Info para el cliente
+            "mode": "+".join(m),
             "status": self.status, "captures": self.captures_count,
             "restante": rest, "diff_actual": f"{self.current_diff:.4f}%"
         }

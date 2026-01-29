@@ -1,6 +1,6 @@
 import tkinter as tk
 from tkinter import messagebox, ttk, simpledialog, Menu, filedialog
-from PIL import Image, ImageTk, ImageDraw
+from PIL import Image, ImageTk, ImageDraw, PngImagePlugin
 import requests
 from io import BytesIO
 import threading
@@ -12,16 +12,20 @@ import platform
 import re
 from datetime import datetime
 import pyperclip
-from PIL import PngImagePlugin
 
 CONFIG_FILE = "client_config.json"
 OUTPUT_FOLDER = "wplace_downloads"
-TILE_SERVER = "https://backend.wplace.live/files/s0/tiles"
+
+# 🧠 DICCIONARIO DE OBJETIVOS
+SOURCES = {
+    "WPlace": "https://backend.wplace.live/files/s0/tiles",
+    "BPlace": "https://bplace.org/files/s0/tiles"
+}
 
 class WPlaceClient:
     def __init__(self, root):
         self.root = root
-        self.root.title("WPlace Commander v18.0 (Final Gold)")
+        self.root.title("WPlace Commander v19.0 (Hybrid Ops)")
         self.root.geometry("1280x850")
         
         style = ttk.Style()
@@ -96,9 +100,15 @@ class WPlaceClient:
 
         left = ttk.Frame(paned, width=400); paned.add(left, minsize=380)
         
-        l1 = ttk.LabelFrame(left, text="1. Datos"); l1.pack(fill='x', padx=5, pady=5)
+        l1 = ttk.LabelFrame(left, text="1. Datos de Misión"); l1.pack(fill='x', padx=5, pady=5)
         tk.Label(l1, text="IP:").grid(row=0, column=0, sticky='e'); tk.Entry(l1, textvariable=self.server_ip, width=22).grid(row=0, column=1)
         tk.Label(l1, text="Nombre:").grid(row=1, column=0, sticky='e'); self.task_name = tk.Entry(l1, width=22); self.task_name.grid(row=1, column=1)
+        
+        # SELECTOR DE OBJETIVO (WPLACE / BPLACE)
+        tk.Label(l1, text="Objetivo:").grid(row=2, column=0, sticky='e')
+        self.combo_source = ttk.Combobox(l1, values=["BPlace", "WPlace"], state="readonly", width=20)
+        self.combo_source.current(0) # Default BPlace
+        self.combo_source.grid(row=2, column=1, pady=5)
 
         l2 = ttk.LabelFrame(left, text="2. Coordenadas"); l2.pack(fill='x', padx=5, pady=5)
         tk.Label(l2, text="P1:").grid(row=0, column=0); self.entry_p1 = tk.Entry(l2, width=35); self.entry_p1.grid(row=0, column=1, pady=2)
@@ -140,12 +150,9 @@ class WPlaceClient:
         self.prepare_checkerboard()
 
     def prepare_checkerboard(self):
-        # Crear un tile pequeño para el fondo
         check = Image.new("RGB", (20, 20), "#CCCCCC")
-        d = ImageDraw.Draw(check)
-        d.rectangle([10,0,20,10], fill="#999999")
-        d.rectangle([0,10,10,20], fill="#999999")
-        self.checker_tile = check # Lo guardamos para generarlo al tamaño necesario
+        d = ImageDraw.Draw(check); d.rectangle([10,0,20,10], fill="#999999"); d.rectangle([0,10,10,20], fill="#999999")
+        self.checker_tile = check
 
     def map_click(self, e):
         cx, cy = self.canvas.canvasx(e.x), self.canvas.canvasy(e.y)
@@ -158,19 +165,26 @@ class WPlaceClient:
 
     def preview(self):
         try:
+            # 🧠 SELECCIÓN DINÁMICA DE SERVIDOR PARA PREVIEW
+            target_source = self.combo_source.get()
+            base_url = SOURCES[target_source]
+
             p1 = self.str_to_coords(self.entry_p1.get() or "0,0"); p2 = self.str_to_coords(self.entry_p2.get() or "1000,1000")
             c = {"x_start": min(p1[0], p2[0]), "y_start": min(p1[1], p2[1]), "x_end": max(p1[0], p2[0]), "y_end": max(p1[1], p2[1])}
             w, h = c['x_end']-c['x_start'], c['y_end']-c['y_start']
             if w*h > 25000000 and not messagebox.askyesno("Alerta", "Área gigante. ¿Seguir?"): return
             img = Image.new("RGBA", (w, h)); tx_s, tx_e = c['x_start']//1000, (c['x_end']-1)//1000; ty_s, ty_e = c['y_start']//1000, (c['y_end']-1)//1000
-            self.root.title("Descargando..."); self.root.update()
+            
+            self.root.title(f"Descargando de {target_source}..."); self.root.update()
+            
+            headers = {'User-Agent': 'Mozilla/5.0'}
             for tx in range(tx_s, tx_e + 1):
                 for ty in range(ty_s, ty_e + 1):
                     try: 
-                        r = requests.get(f"{TILE_SERVER}/{tx}/{ty}.png", timeout=2)
+                        r = requests.get(f"{base_url}/{tx}/{ty}.png", headers=headers, timeout=2)
                         if r.status_code==200: img.paste(Image.open(BytesIO(r.content)).convert("RGBA"), ((tx*1000)-c['x_start'], (ty*1000)-c['y_start']))
                     except: pass
-            self.root.title("WPlace Commander v18.0"); self.preview_image_raw = img; self.zoom_level = 1.0; self.render_image()
+            self.root.title("WPlace Commander v19.0"); self.preview_image_raw = img; self.zoom_level = 1.0; self.render_image()
         except Exception as e: messagebox.showerror("Error", str(e))
 
     def zoom(self, f):
@@ -180,25 +194,14 @@ class WPlaceClient:
     def render_image(self):
         if not self.preview_image_raw: return
         w, h = self.preview_image_raw.size; nw, nh = int(w*self.zoom_level), int(h*self.zoom_level)
-        
-        # 1. Generar Fondo Ajedrez al tamaño requerido
         bg = Image.new("RGB", (nw, nh))
-        # Rellenar con tiles (método rápido: resize de un patrón grande o loop)
-        # Para ser eficiente, creamos patrón de 100x100 y lo copiamos
         pat = Image.new("RGB", (100, 100))
         for i in range(0, 100, 20):
-            for j in range(0, 100, 20):
-                pat.paste(self.checker_tile, (i, j))
-        
-        # Tilear el patrón grande
+            for j in range(0, 100, 20): pat.paste(self.checker_tile, (i, j))
         for i in range(0, nw, 100):
-            for j in range(0, nh, 100):
-                bg.paste(pat, (i, j))
-        
-        # 2. Pegar imagen transparente encima
+            for j in range(0, nh, 100): bg.paste(pat, (i, j))
         resized = self.preview_image_raw.resize((nw, nh), Image.Resampling.NEAREST)
         bg.paste(resized, (0, 0), resized)
-        
         self.tk_image_ref = ImageTk.PhotoImage(bg)
         self.canvas.delete("all"); self.canvas.config(scrollregion=(0, 0, nw, nh)); self.canvas.create_image(0, 0, image=self.tk_image_ref, anchor="nw")
 
@@ -207,8 +210,6 @@ class WPlaceClient:
             try:
                 if not os.path.exists(OUTPUT_FOLDER): os.makedirs(OUTPUT_FOLDER)
                 path = f"{OUTPUT_FOLDER}/snap_{datetime.now().strftime('%H%M%S')}.png"
-                
-                # 🧠 REPLICAR LÓGICA DE METADATOS EN LOCAL
                 p1_str = self.entry_p1.get()
                 try:
                     p1_x, p1_y = self.str_to_coords(p1_str)
@@ -216,24 +217,14 @@ class WPlaceClient:
                         "Tl": {"X": p1_x // 1000, "Y": p1_y // 1000},
                         "Px": {"X": p1_x % 1000, "Y": p1_y % 1000}
                     }
-                    
                     meta = PngImagePlugin.PngInfo()
                     meta.add_text("Description", json.dumps(meta_data, indent=2))
-                    
-                    # Guardar con metadatos
                     self.preview_image_raw.save(path, "PNG", pnginfo=meta)
-                except:
-                    # Si no hay coordenadas válidas en los campos, guardar sin ellas
-                    self.preview_image_raw.save(path)
-                
-                messagebox.showinfo("OK", f"Captura local guardada con metadatos:\n{path}")
-                self.abrir_carpeta(OUTPUT_FOLDER)
-            except Exception as e:
-                messagebox.showerror("Error", f"No se pudo guardar la captura local: {e}")
-        else:
-            messagebox.showwarning("Ops", "Primero haz una previsualización.")
+                except: self.preview_image_raw.save(path)
+                messagebox.showinfo("OK", f"Guardado:\n{path}"); self.abrir_carpeta(OUTPUT_FOLDER)
+            except Exception as e: messagebox.showerror("Error", str(e))
+        else: messagebox.showwarning("Ops", "Sin preview.")
 
-    # --- FAVORITOS ---
     def guardar_fav(self):
         n = simpledialog.askstring("Nombre", "Nombre zona:")
         if n: self.config["favorites"][n] = {"p1": self.entry_p1.get(), "p2": self.entry_p2.get()}; self.guardar_config(); self.combo_favs['values'] = list(self.config["favorites"].keys()); self.combo_favs.set(n)
@@ -248,13 +239,19 @@ class WPlaceClient:
         try:
             p1 = self.str_to_coords(self.entry_p1.get()); p2 = self.str_to_coords(self.entry_p2.get())
             c = {"x_start": min(p1[0], p2[0]), "y_start": min(p1[1], p2[1]), "x_end": max(p1[0], p2[0]), "y_end": max(p1[1], p2[1])}
-            data = {"name": self.task_name.get(), "coords": c, "save_timelapse": self.chk_time.get(), "sentry": self.chk_sent.get(), "interval": int(self.sp_int.get()), "duration_hours": float(self.sp_dur.get()), "limit_mb": int(self.sp_mb.get()), "alert_pct": float(self.sp_sens.get()), "tg_token": self.et_tok.get(), "tg_chat": self.et_chat.get()}
+            data = {
+                "name": self.task_name.get(), "coords": c, 
+                "source": self.combo_source.get(), # 🧠 ENVÍO DE LA FUENTE (BPlace/WPlace)
+                "save_timelapse": self.chk_time.get(), "sentry": self.chk_sent.get(), 
+                "interval": int(self.sp_int.get()), "duration_hours": float(self.sp_dur.get()), 
+                "limit_mb": int(self.sp_mb.get()), "alert_pct": float(self.sp_sens.get()), 
+                "tg_token": self.et_tok.get(), "tg_chat": self.et_chat.get()
+            }
             r = requests.post(f"{self.server_ip.get().rstrip('/')}/tasks/create", json=data, timeout=3)
             if r.status_code==200: tid = r.json()['task_id']; requests.post(f"{self.server_ip.get().rstrip('/')}/tasks/{tid}/start"); messagebox.showinfo("OK", f"Tarea iniciada (ID {tid})"); self.notebook.select(1); self.guardar_config()
             else: messagebox.showerror("Err", r.text)
         except Exception as e: messagebox.showerror("Err", str(e))
 
-    # ================= PESTAÑA 2 =================
     def setup_tab_manager(self):
         f = ttk.LabelFrame(self.tab_manager, text="Estado Global"); f.pack(fill='x', padx=10, pady=5)
         self.lbl_cpu = tk.Label(f, text="CPU: --%", fg="blue", font=("Arial", 10, "bold")); self.lbl_cpu.pack(side='left', padx=20)
@@ -267,9 +264,9 @@ class WPlaceClient:
         self.ctx_menu.add_separator()
         self.ctx_menu.add_command(label="🗑 ELIMINAR TAREA", command=lambda: self.do_act("delete"))
 
-        cols = ("ID", "Nombre", "Modos", "Inicio", "Estado", "Fotos", "Restante", "Dif %")
+        cols = ("ID", "Nombre", "Fuente", "Modos", "Inicio", "Estado", "Fotos", "Restante", "Dif %")
         self.tree = ttk.Treeview(self.tab_manager, columns=cols, show='headings', selectmode='browse')
-        for c, w in zip(cols, [40, 200, 150, 100, 80, 60, 80, 80]): self.tree.heading(c, text=c); self.tree.column(c, width=w, anchor="center")
+        for c, w in zip(cols, [40, 180, 80, 120, 100, 80, 60, 80, 80]): self.tree.heading(c, text=c); self.tree.column(c, width=w, anchor="center")
         self.tree.pack(fill='both', expand=True, padx=10, pady=5); self.tree.bind("<Button-3>", lambda e: (self.tree.selection_set(self.tree.identify_row(e.y)), self.ctx_menu.post(e.x_root, e.y_root)) if self.tree.identify_row(e.y) else None)
 
         bf = ttk.Frame(self.tab_manager); bf.pack(fill='x', padx=10, pady=10)
@@ -308,52 +305,35 @@ class WPlaceClient:
             if "S" in t['mode']: m.append("Centinela")
             tag = 'run' if t['status']=='running' else 'stop'; 
             if t['status']=='error': tag='err'
-            item = self.tree.insert("", "end", values=(t['id'], t['name'], " + ".join(m) or "Inactivo", t.get('start_str'), t['status'].upper(), t['captures'], t['restante'], t['diff_actual']), tags=(tag,))
+            
+            # Mostramos la fuente en la tabla
+            source_show = t.get('source', 'WPlace') 
+            
+            item = self.tree.insert("", "end", values=(t['id'], t['name'], source_show, " + ".join(m) or "Inactivo", t.get('start_str'), t['status'].upper(), t['captures'], t['restante'], t['diff_actual']), tags=(tag,))
             if str(t['id']) == str(sid): self.tree.selection_set(item)
         self.tree.tag_configure('run', foreground='green'); self.tree.tag_configure('err', foreground='red')
 
-    # ================= PESTAÑA 3: SISTEMA =================
     def setup_tab_system(self):
         f = ttk.LabelFrame(self.tab_system, text="Gestión Global"); f.pack(fill='both', padx=20, pady=20)
-        ttk.Button(f, text="🔍 INSPECCIONAR CAPTURA (Ver Coordenadas)", style="Accent.TButton", command=self.inspect_file).pack(pady=10, fill='x')
+        ttk.Button(f, text="🔍 INSPECCIONAR CAPTURA", style="Accent.TButton", command=self.inspect_file).pack(pady=10, fill='x')
         ttk.Button(f, text="📥 DESCARGAR BACKUP COMPLETO", style="Orange.TButton", command=lambda: self.descargar_zip(None)).pack(pady=10, fill='x')
         ttk.Button(f, text="📂 ABRIR CARPETA LOCAL", style="Blue.TButton", command=lambda: self.abrir_carpeta(OUTPUT_FOLDER)).pack(pady=10, fill='x')
-        
         f2 = ttk.LabelFrame(self.tab_system, text="Zona de Peligro"); f2.pack(fill='x', padx=20, pady=20)
-        ttk.Button(f2, text="🧹 ELIMINAR TODAS LAS TAREAS (Config)", style="Warning.TButton", command=self.del_all_tasks).pack(side='left', expand=True, padx=5, pady=10)
-        ttk.Button(f2, text="🔥 ELIMINAR TODAS LAS FOTOS (Archivos)", style="Red.TButton", command=self.del_all_photos).pack(side='right', expand=True, padx=5, pady=10)
+        ttk.Button(f2, text="🧹 ELIMINAR TODAS LAS TAREAS", style="Warning.TButton", command=self.del_all_tasks).pack(side='left', expand=True, padx=5, pady=10)
+        ttk.Button(f2, text="🔥 ELIMINAR TODAS LAS FOTOS", style="Red.TButton", command=self.del_all_photos).pack(side='right', expand=True, padx=5, pady=10)
 
     def inspect_file(self):
-        f = filedialog.askopenfilename(title="Seleccionar PNG de WPlace", filetypes=[("PNG", "*.png")])
+        f = filedialog.askopenfilename(title="Seleccionar PNG", filetypes=[("PNG", "*.png")])
         if f:
             try:
-                # Abrimos la imagen y forzamos la carga de info
-                img = Image.open(f)
-                img.load() 
-                
-                # Buscamos en 'text' o en 'info' (Pillow usa ambos según la versión)
+                img = Image.open(f); img.load()
                 raw_data = img.info.get("Description") or img.text.get("Description")
-                
                 if raw_data:
-                    try:
-                        # Validamos que sea JSON
-                        json_data = json.loads(raw_data)
-                        formatted_json = json.dumps(json_data, indent=2)
-                        
-                        # 📋 COPIA AUTOMÁTICA AL PORTAPAPELES
-                        import pyperclip
-                        pyperclip.copy(formatted_json)
-                        
-                        messagebox.showinfo("Inspección Forense", 
-                            f"📁 Archivo: {os.path.basename(f)}\n\n"
-                            f"📍 Coordenadas (JSON):\n{formatted_json}\n\n"
-                            "✅ ¡Copiado al portapapeles!")
-                    except json.JSONDecodeError:
-                        messagebox.showwarning("Aviso", "Se encontraron metadatos pero el formato JSON es inválido.")
-                else:
-                    messagebox.showwarning("Aviso", "No se detectaron metadatos en la etiqueta 'Description'.")
-            except Exception as e:
-                messagebox.showerror("Error", f"Fallo al inspeccionar: {e}")
+                    json_data = json.loads(raw_data); formatted_json = json.dumps(json_data, indent=2)
+                    pyperclip.copy(formatted_json)
+                    messagebox.showinfo("Inspección", f"📁 {os.path.basename(f)}\n\n📍 JSON:\n{formatted_json}\n\n✅ Copiado al portapapeles!")
+                else: messagebox.showwarning("Aviso", "Sin metadatos JSON.")
+            except Exception as e: messagebox.showerror("Error", str(e))
 
     def descargar_zip(self, tid=None):
         try:
@@ -368,9 +348,9 @@ class WPlaceClient:
         except Exception as e: messagebox.showerror("Error", str(e))
 
     def del_all_tasks(self): 
-        if messagebox.askyesno("CONFIRMAR", "¿Borrar TODAS las tareas de la lista? (Las fotos quedan guardadas)"): requests.post(f"{self.server_ip.get().rstrip('/')}/delete_tasks")
+        if messagebox.askyesno("CONFIRMAR", "¿Borrar tareas?"): requests.post(f"{self.server_ip.get().rstrip('/')}/delete_tasks")
     def del_all_photos(self): 
-        if messagebox.askyesno("PELIGRO", "¿Borrar TODAS las fotos del disco? (Esto es irreversible)"): requests.post(f"{self.server_ip.get().rstrip('/')}/delete_photos")
+        if messagebox.askyesno("PELIGRO", "¿Borrar fotos?"): requests.post(f"{self.server_ip.get().rstrip('/')}/delete_photos")
     def stop_all(self): requests.post(f"{self.server_ip.get().rstrip('/')}/stop_all")
 
 if __name__ == "__main__":

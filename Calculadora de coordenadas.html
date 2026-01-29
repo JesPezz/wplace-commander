@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <title>Calculadora de Coordenadas por Bloques</title>
+  <style>
+    body { font-family: 'Segoe UI', Arial, sans-serif; margin: 20px; background-color: #f4f6f8; }
+    h2 { color: #333; }
+    fieldset { margin-bottom: 20px; padding: 15px; background: white; border: 1px solid #ddd; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+    legend { font-weight: bold; color: #555; padding: 0 5px; }
+    label { display: block; margin-top: 10px; font-weight: 600; font-size: 0.9em; }
+    input, button, select { padding: 8px; margin-top: 5px; width: 100%; box-sizing: border-box; border: 1px solid #ccc; border-radius: 4px; }
+    button { margin-top: 15px; cursor: pointer; background-color: #eee; font-weight: bold; transition: 0.2s; }
+    button:hover { background-color: #ddd; }
+    pre { background: #f8f9fa; padding: 10px; white-space: pre-wrap; border-radius: 4px; border: 1px solid #eee; }
+    canvas { border: 1px solid #999; display: block; margin-top: 10px; max-width: 100%; cursor: crosshair; }
+    .help { font-size: 0.85em; color: #666; margin-top: 5px; }
+    
+    /* Estilos Resultados */
+    .res-container { background:#e8f5e9; border:1px solid #a5d6a7; padding:15px; border-radius:6px; margin-top:10px; }
+    .res-row { display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; border-bottom: 1px solid #c8e6c9; padding-bottom:10px; }
+    .res-row:last-child { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
+    .res-label { font-weight:bold; color:#2e7d32; }
+    .res-val { font-family:monospace; font-size:1.1em; color:#1b5e20; }
+    .btn-copy { background:#2e7d32; color:white; border:none; padding:5px 15px; margin:0; width:auto; font-size:0.9em; }
+    .btn-copy:hover { background:#1b5e20; }
+  </style>
+</head>
+<body>
+
+<h2>Calculadora de Coordenadas (Tiles 1000×1000)</h2>
+
+<p class="help">
+  <strong>Objetivo:</strong> Encontrar dónde colocar la imagen (P1) para que la coordenada ingresada coincida con el punto de anclaje seleccionado (ej. Centro).
+</p>
+
+<fieldset>
+  <legend>Historial de operaciones</legend>
+  <button onclick="limpiarHistorial()">Limpiar historial</button>
+  <pre id="historial" style="max-height: 100px; overflow-y: auto;"></pre>
+</fieldset>
+
+<fieldset>
+  <legend>1. Coordenada de Referencia (El punto conocido en el mapa)</legend>
+  <input id="coordInput" placeholder="Ej: 458, 871, 775, 594" />
+</fieldset>
+
+<fieldset>
+  <legend>2. Imagen y Punto de Anclaje</legend>
+  <input type="file" id="imgLoader" accept="image/*" />
+  <canvas id="imgCanvas"></canvas>
+  <pre id="imgInfo">Carga una imagen para ver sus dimensiones...</pre>
+</fieldset>
+
+<fieldset>
+  <legend>3. Configuración de Anclaje</legend>
+  <div style="display:flex; gap:10px;">
+    <div style="flex:1">
+      <label>Ancho (px)</label>
+      <input id="imgW" type="number" readonly style="background:#f0f0f0;" />
+    </div>
+    <div style="flex:1">
+      <label>Alto (px)</label>
+      <input id="imgH" type="number" readonly style="background:#f0f0f0;" />
+    </div>
+  </div>
+
+  <label>¿Qué parte de la imagen debe caer en la coordenada de referencia?</label>
+  <select id="anchor" onchange="actualizarAnchor()">
+    <option value="center" selected>Centro de la imagen</option>
+    <option value="topleft">Esquina superior izquierda (P1)</option>
+    <option value="topright">Esquina superior derecha</option>
+    <option value="bottomleft">Esquina inferior izquierda</option>
+    <option value="bottomright">Esquina inferior derecha (P2)</option>
+    <option value="custom">Personalizado (Click en imagen)</option>
+  </select>
+  
+  <div id="customAnchor" style="display:none; margin-top:8px; background:#fff3e0; padding:10px; border-radius:4px;">
+    <label>Desplazamiento manual desde la esquina sup. izq:</label>
+    <div style="display:flex; gap:10px;">
+      <input id="anchorPxX" type="number" min="0" placeholder="Px X" onchange="actualizarAnchor()" />
+      <input id="anchorPxY" type="number" min="0" placeholder="Px Y" onchange="actualizarAnchor()" />
+    </div>
+  </div>
+  
+  <button onclick="calcularP1P2()" style="background-color: #2196F3; color: white; padding: 12px;">CALCULAR POSICIÓN EXACTA (P1 y P2)</button>
+</fieldset>
+
+<div id="outputHome"></div>
+
+<fieldset style="margin-top: 30px; opacity: 0.8;">
+  <legend>Extras: Desplazamiento Manual</legend>
+  <input id="shiftCoord" placeholder="Coord base" />
+  <div style="display:flex; gap:10px;">
+    <input id="dx" type="number" value="0" placeholder="ΔX" />
+    <input id="dy" type="number" value="0" placeholder="ΔY" />
+  </div>
+  <button onclick="aplicarDesplazamiento()">Aplicar</button>
+  <pre id="outputShift"></pre>
+</fieldset>
+
+<fieldset style="opacity: 0.8;">
+  <legend>Extras: Distancia</legend>
+  <input id="coordA" placeholder="Coord A" />
+  <input id="coordB" placeholder="Coord B" />
+  <button onclick="calcularDistancia()">Calcular</button>
+  <pre id="outputDist"></pre>
+</fieldset>
+
+<script>
+const TILE = 1000;
+let historial = [];
+let img = new Image();
+let canvas = document.getElementById('imgCanvas');
+let ctx = canvas.getContext('2d');
+let scale = 1;
+let anchorX = null;
+let anchorY = null;
+let shiftAbs = null;
+
+// --- FUNCIONES CORE ---
+
+function parseCoord(text) {
+  const n = text.match(/-?\d+/g);
+  if (!n || n.length < 4) throw new Error('Formato inválido. Usa: Tl X, Tl Y, Px X, Px Y');
+  return { TIx:+n[0], TIy:+n[1], Pxx:+n[2], Pxy:+n[3] };
+}
+
+function toAbsolute(c) {
+  return { X: c.TIx * TILE + c.Pxx, Y: c.TIy * TILE + c.Pxy };
+}
+
+function toTile(a) {
+  let TIx = Math.floor(a.X / TILE);
+  let TIy = Math.floor(a.Y / TILE);
+  let Pxx = a.X % TILE;
+  let Pxy = a.Y % TILE;
+  if (Pxx < 0) { Pxx += TILE; TIx--; }
+  if (Pxy < 0) { Pxy += TILE; TIy--; }
+  return { TIx, TIy, Pxx, Pxy };
+}
+
+// --- VISUALIZADOR DE IMAGEN ---
+
+imgLoader.onchange = e => {
+  const f = e.target.files[0];
+  if (!f) return;
+  const r = new FileReader();
+  r.onload = ev => {
+    img.onload = () => {
+      scale = Math.min(800 / img.width, 800 / img.height, 1);
+      canvas.width = img.width * scale;
+      canvas.height = img.height * scale;
+      imgW.value = img.width;
+      imgH.value = img.height;
+      actualizarAnchor();
+    };
+    img.src = ev.target.result;
+  };
+  r.readAsDataURL(f);
+};
+
+canvas.onclick = e => {
+  const r = canvas.getBoundingClientRect();
+  anchorX = Math.floor((e.clientX - r.left) / scale);
+  anchorY = Math.floor((e.clientY - r.top) / scale);
+  anchor.value = 'custom';
+  customAnchor.style.display = 'block';
+  anchorPxX.value = anchorX;
+  anchorPxY.value = anchorY;
+  imgInfo.textContent = `Punto seleccionado manual: X=${anchorX}, Y=${anchorY}`;
+  drawImage();
+};
+
+function actualizarAnchor() {
+  const w = +imgW.value || 0;
+  const h = +imgH.value || 0;
+  customAnchor.style.display = anchor.value === 'custom' ? 'block' : 'none';
+  
+  if (anchor.value === 'center') { anchorX = Math.floor(w/2); anchorY = Math.floor(h/2); }
+  if (anchor.value === 'topleft') { anchorX = 0; anchorY = 0; }
+  if (anchor.value === 'topright') { anchorX = w; anchorY = 0; }
+  if (anchor.value === 'bottomleft') { anchorX = 0; anchorY = h; }
+  if (anchor.value === 'bottomright') { anchorX = w; anchorY = h; }
+  if (anchor.value === 'custom') { anchorX = +anchorPxX.value; anchorY = +anchorPxY.value; }
+  
+  if (!isNaN(anchorX) && !isNaN(anchorY)) {
+    imgInfo.textContent = `Dimensiones: ${w}x${h} | Anclaje en: X=${anchorX}, Y=${anchorY}`;
+  }
+  drawImage();
+}
+
+function drawImage() {
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  if (img.src) ctx.drawImage(img,0,0,canvas.width,canvas.height);
+  if (anchorX !== null && anchorY !== null) {
+    // Dibujar cruz
+    const x = anchorX * scale;
+    const y = anchorY * scale;
+    ctx.strokeStyle = 'red';
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(x-10, y); ctx.lineTo(x+10, y); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(x, y-10); ctx.lineTo(x, y+10); ctx.stroke();
+  }
+}
+
+// --- LÓGICA DE CÁLCULO PRINCIPAL ---
+
+function copiarTexto(txt) {
+  navigator.clipboard.writeText(txt).then(() => {
+     // Feedback visual sutil (opcional)
+  });
+}
+
+function calcularP1P2() {
+  try {
+    // 1. Obtener coordenada absoluta de referencia
+    const c = parseCoord(coordInput.value);
+    const absRef = toAbsolute(c);
+
+    // 2. Calcular dónde debe empezar la imagen (P1)
+    // Si la referencia es el centro, P1 = Ref - (W/2, H/2)
+    // Es decir: P1 = Ref - Anchor
+    const p1Abs = { X: absRef.X - anchorX, Y: absRef.Y - anchorY };
+    const r1 = toTile(p1Abs);
+    const p1Str = `(Tl X: ${r1.TIx}, Tl Y: ${r1.TIy}, Px X: ${r1.Pxx}, Px Y: ${r1.Pxy})`;
+
+    // 3. Calcular dónde termina la imagen (P2)
+    // P2 = P1 + Ancho, Alto
+    const w = parseInt(imgW.value) || 0;
+    const h = parseInt(imgH.value) || 0;
+    const p2Abs = { X: p1Abs.X + w, Y: p1Abs.Y + h };
+    const r2 = toTile(p2Abs);
+    const p2Str = `(Tl X: ${r2.TIx}, Tl Y: ${r2.TIy}, Px X: ${r2.Pxx}, Px Y: ${r2.Pxy})`;
+
+    // 4. Mostrar resultados
+    const htmlOut = `
+      <div class="res-container">
+        <div class="res-row">
+            <div>
+                <span class="res-label">P1 (INICIO):</span>
+                <span class="res-val" style="margin-left:10px;">${p1Str}</span>
+            </div>
+            <button class="btn-copy" onclick="copiarTexto('${p1Str}')">COPIAR</button>
+        </div>
+        
+        <div class="res-row">
+            <div>
+                <span class="res-label">P2 (FINAL):</span>
+                <span class="res-val" style="margin-left:14px;">${p2Str}</span>
+            </div>
+            <button class="btn-copy" onclick="copiarTexto('${p2Str}')">COPIAR</button>
+        </div>
+        
+        <div style="font-size:0.85em; color:#555; margin-top:5px; border-top:1px solid #c8e6c9; padding-top:5px;">
+           Referencia Absoluta: ${absRef.X}, ${absRef.Y} <br>
+           P1 Absoluto: ${p1Abs.X}, ${p1Abs.Y}
+        </div>
+      </div>
+    `;
+
+    document.getElementById('outputHome').innerHTML = htmlOut;
+    
+    agregarHistorial('CALCULO P1/P2', `Ref: ${absRef.X},${absRef.Y}\nP1: ${p1Str}\nP2: ${p2Str}`);
+
+  } catch (e) { 
+    document.getElementById('outputHome').innerHTML = `<div style="color:red; padding:10px; background:#ffebee;">Error: ${e.message}</div>`;
+  }
+}
+
+// --- UTILS HISTORIAL ---
+
+function agregarHistorial(t, c) {
+  historial.unshift(`[${new Date().toLocaleTimeString()}] ${t}\n${c}`);
+  document.getElementById('historial').textContent = historial.join('\n----------------\n');
+}
+function limpiarHistorial() {
+  historial = [];
+  document.getElementById('historial').textContent = '';
+}
+
+// --- EXTRAS LEGACY ---
+function aplicarDesplazamiento() {
+  try {
+    if (!shiftAbs) {
+      const c = parseCoord(shiftCoord.value);
+      shiftAbs = toAbsolute(c);
+    }
+    shiftAbs.X += +dx.value;
+    shiftAbs.Y += +dy.value;
+    const r = toTile(shiftAbs);
+    const out = `Tl X: ${r.TIx}, Tl Y: ${r.TIy}, Px X: ${r.Pxx}, Px Y: ${r.Pxy}`;
+    outputShift.textContent = out;
+  } catch (e) { outputShift.textContent = e.message; }
+}
+
+function calcularDistancia() {
+  try {
+    const a = toAbsolute(parseCoord(coordA.value));
+    const b = toAbsolute(parseCoord(coordB.value));
+    const d = Math.sqrt(Math.pow(b.X - a.X, 2) + Math.pow(b.Y - a.Y, 2));
+    outputDist.textContent = `Distancia: ${d.toFixed(2)} px`;
+  } catch (e) { outputDist.textContent = e.message; }
+}
+</script>
+</body>
+</html>
