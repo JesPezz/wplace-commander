@@ -10,7 +10,7 @@ import os
 import subprocess
 import platform
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 import pyperclip
 
 CONFIG_FILE = "client_config.json"
@@ -56,18 +56,133 @@ class WPlaceClient:
         self.tab_new = ttk.Frame(self.notebook)
         self.tab_manager = ttk.Frame(self.notebook)
         self.tab_system = ttk.Frame(self.notebook)
+        self.tab_planner = ttk.Frame(self.notebook)
+        self.tab_telegram = ttk.Frame(self.notebook)  # NUEVA PESTAÑA PARA TELEGRAM
         
         self.notebook.add(self.tab_new, text="🔭 Misión")
         self.notebook.add(self.tab_manager, text="📡 Radar de Tareas")
+        self.notebook.add(self.tab_planner, text="📅 Planificador")
+        self.notebook.add(self.tab_telegram, text="📱 Telegram") # AÑADIDO AL MENÚ
         self.notebook.add(self.tab_system, text="⚙️ Sistema")
         
         self.setup_tab_new()
         self.setup_tab_manager()
+        self.setup_tab_planner()
+        self.setup_tab_telegram()
         self.setup_tab_system()
         
         self.running = True
         threading.Thread(target=self.monitor_loop, daemon=True).start()
 
+       # ================= PESTAÑA TELEGRAM =================
+    def setup_tab_telegram(self):
+        f = ttk.LabelFrame(self.tab_telegram, text="Credenciales Globales de Telegram")
+        f.pack(fill='both', expand=True, padx=20, pady=20)
+        
+        ttk.Label(f, text="Bot Token:").grid(row=0, column=0, padx=10, pady=10, sticky='e')
+        self.et_tok = tk.Entry(f, width=45)
+        self.et_tok.insert(0, self.config.get("tg_token", ""))
+        self.et_tok.grid(row=0, column=1, padx=10, pady=10)
+        
+        ttk.Label(f, text="Chat ID:").grid(row=1, column=0, padx=10, pady=10, sticky='e')
+        self.et_chat = tk.Entry(f, width=45)
+        self.et_chat.insert(0, self.config.get("tg_chat", ""))
+        self.et_chat.grid(row=1, column=1, padx=10, pady=10)
+        
+        ttk.Button(f, text="💾 GUARDAR CONFIGURACIÓN", style="Accent.TButton", command=self.guardar_tg).grid(row=2, column=0, columnspan=2, pady=20)
+        
+    def guardar_tg(self):
+        self.config["tg_token"] = self.et_tok.get()
+        self.config["tg_chat"] = self.et_chat.get()
+        self.guardar_config()
+        messagebox.showinfo("Guardado", "Credenciales de Telegram guardadas globalmente.\nAhora aplicarán para Misiones y Planificador.")
+
+        # ================= PESTAÑA PLANIFICADOR =================
+    def setup_tab_planner(self):
+        f = ttk.LabelFrame(self.tab_planner, text="Calculadora Estratégica Híbrida")
+        f.pack(fill='both', expand=True, padx=20, pady=20)
+        
+        ttk.Label(f, text="Píxeles Actuales:").grid(row=0, column=0, padx=10, pady=10, sticky='e')
+        self.pl_actuales = ttk.Entry(f, width=15)
+        self.pl_actuales.grid(row=0, column=1, padx=10, pady=10, sticky='w')
+        
+        ttk.Label(f, text="Capacidad Máxima:").grid(row=1, column=0, padx=10, pady=10, sticky='e')
+        self.pl_max = ttk.Entry(f, width=15)
+        self.pl_max.insert(0, "7000")
+        self.pl_max.grid(row=1, column=1, padx=10, pady=10, sticky='w')
+        
+        ttk.Label(f, text="Objetivo de Disparo (%):").grid(row=2, column=0, padx=10, pady=10, sticky='e')
+        self.pl_obj = ttk.Entry(f, width=15)
+        self.pl_obj.insert(0, "85")
+        self.pl_obj.grid(row=2, column=1, padx=10, pady=10, sticky='w')
+        
+        ttk.Label(f, text="Reserva de Defensa (%):").grid(row=3, column=0, padx=10, pady=10, sticky='e')
+        self.pl_res = ttk.Entry(f, width=15)
+        self.pl_res.insert(0, "25")
+        self.pl_res.grid(row=3, column=1, padx=10, pady=10, sticky='w')
+        
+        ttk.Button(f, text="CALCULAR Y ACTIVAR ALERTA", style="Accent.TButton", command=self.calcular_plan).grid(row=4, column=0, columnspan=2, pady=20)
+        
+        res_f = ttk.LabelFrame(f, text="Resultados y Cronograma")
+        res_f.grid(row=5, column=0, columnspan=2, sticky='ew', padx=10, pady=10)
+        
+        self.lbl_plan_res = ttk.Label(res_f, text="Ingresa tus datos para generar el plan...", justify="left", font=('Segoe UI', 10))
+        self.lbl_plan_res.pack(padx=15, pady=15, anchor="w")
+
+    def calcular_plan(self):
+        try:
+            actuales = int(self.pl_actuales.get())
+            maximos = int(self.pl_max.get())
+            obj_pct = float(self.pl_obj.get())
+            res_pct = float(self.pl_res.get())
+            
+            px_objetivo = int(maximos * (obj_pct / 100))
+            px_reserva = int(maximos * (res_pct / 100))
+            px_gastar = px_objetivo - px_reserva
+            
+            px_faltantes = max(0, px_objetivo - actuales)
+            segundos_espera = px_faltantes * 30
+            fecha_alerta = datetime.now() + timedelta(seconds=segundos_espera)
+            horas_margen = ((maximos - px_objetivo) * 30) / 3600.0
+            
+            txt = (
+                f"🎯 Objetivo a alcanzar: {px_objetivo} px ({obj_pct}%)\n"
+                f"🛡️ Reserva a dejar: {px_reserva} px ({res_pct}%)\n"
+                f"🖌️ Píxeles a pintar por sesión: {px_gastar} px\n\n"
+                f"⏱️ Tiempo de recarga estimado: {round(segundos_espera / 3600.0, 2)} horas\n"
+                f"⏰ Hora de notificación: {fecha_alerta.strftime('%d/%m/%Y a las %H:%M:%S')}\n"
+                f"🔋 Margen de inactividad antes de perder píxeles: {round(horas_margen, 2)} horas"
+            )
+            self.lbl_plan_res.config(text=txt)
+            
+            token = self.et_tok.get()
+            chat_id = self.et_chat.get()
+            
+            if not token or not chat_id:
+                messagebox.showwarning("Aviso", "Ve a la pestaña 'Telegram' y configura tus credenciales para recibir la alerta.")
+                return
+
+            if px_faltantes > 0:
+                payload = {
+                    "segundos_espera": segundos_espera,
+                    "px_objetivo": px_objetivo,
+                    "token": token,
+                    "chat_id": chat_id,
+                    "config_txt": txt 
+                }
+                r = requests.post(f"{self.server_ip.get().rstrip('/')}/plan/set", json=payload, timeout=3)
+                if r.status_code == 200:
+                    messagebox.showinfo("Alerta Activada", "¡Plan calculado! El servidor te avisará por Telegram en el momento exacto.")
+                else:
+                    messagebox.showerror("Error", f"El servidor devolvió el código {r.status_code}.")
+            else:
+                messagebox.showinfo("Listo", "¡Ya tienes los píxeles necesarios para pintar!")
+                
+        except ValueError:
+            messagebox.showerror("Error de Datos", "Asegúrate de ingresar solo números válidos en las casillas.")
+        except Exception as e:
+            # ESTO EVITA LOS ERRORES SILENCIOSOS
+            messagebox.showerror("Error Crítico", f"El programa se detuvo por este error de código:\n{str(e)}")
     def cargar_config(self):
         if os.path.exists(CONFIG_FILE):
             try: return json.load(open(CONFIG_FILE))
@@ -128,11 +243,7 @@ class WPlaceClient:
         tk.Label(l3, text="Hrs:").grid(row=1, column=2, sticky='e'); self.sp_dur = ttk.Spinbox(l3, from_=0, to=48, width=5); self.sp_dur.set(0); self.sp_dur.grid(row=1, column=3)
         tk.Label(l3, text="MB:").grid(row=2, column=0, sticky='e'); self.sp_mb = ttk.Spinbox(l3, from_=100, to=5000, width=5); self.sp_mb.set(1000); self.sp_mb.grid(row=2, column=1)
         tk.Label(l3, text="Alert:").grid(row=2, column=2, sticky='e'); self.sp_sens = ttk.Spinbox(l3, from_=0.1, to=50, width=5, increment=0.1); self.sp_sens.set(5.0); self.sp_sens.grid(row=2, column=3)
-
-        l4 = ttk.LabelFrame(left, text="4. Telegram"); l4.pack(fill='x', padx=5, pady=5)
-        self.et_tok = tk.Entry(l4, width=35); self.et_tok.pack(pady=2); self.et_tok.insert(0, self.config.get("tg_token", ""))
-        self.et_chat = tk.Entry(l4, width=35); self.et_chat.pack(pady=2); self.et_chat.insert(0, self.config.get("tg_chat", ""))
-
+       
         ttk.Button(left, text="🚀 LANZAR TAREA", style="Accent.TButton", command=self.lanzar).pack(fill='x', padx=10, pady=15, ipady=5)
 
         right = ttk.LabelFrame(paned, text="Visor Táctico"); paned.add(right, minsize=400, stretch="always")
@@ -291,10 +402,18 @@ class WPlaceClient:
             time.sleep(2)
 
     def refresh(self):
-        r = requests.get(f"{self.server_ip.get().rstrip('/')}/status", timeout=2)
-        if r.status_code == 200: self.root.after(0, lambda: self.upd_ui(r.json()))
+        try:
+            r = requests.get(f"{self.server_ip.get().rstrip('/')}/status", timeout=2)
+            r_plan = requests.get(f"{self.server_ip.get().rstrip('/')}/plan/status", timeout=2)
+            
+            if r.status_code == 200:
+                d = r.json()
+                p = r_plan.json() if r_plan.status_code == 200 else {"active": False}
+                self.root.after(0, lambda: self.upd_ui(d, p))
+        except: 
+            pass
 
-    def upd_ui(self, d):
+    def upd_ui(self, d, p):
         sid = None; sel = self.tree.selection()
         if sel: sid = self.tree.item(sel[0])['values'][0]
         self.lbl_cpu.config(text=f"CPU: {d['system']['cpu']}%"); self.lbl_ram.config(text=f"RAM: {d['system']['ram']}%")
@@ -306,13 +425,24 @@ class WPlaceClient:
             tag = 'run' if t['status']=='running' else 'stop'; 
             if t['status']=='error': tag='err'
             
-            # Mostramos la fuente en la tabla
             source_show = t.get('source', 'WPlace') 
             
             item = self.tree.insert("", "end", values=(t['id'], t['name'], source_show, " + ".join(m) or "Inactivo", t.get('start_str'), t['status'].upper(), t['captures'], t['restante'], t['diff_actual']), tags=(tag,))
             if str(t['id']) == str(sid): self.tree.selection_set(item)
         self.tree.tag_configure('run', foreground='green'); self.tree.tag_configure('err', foreground='red')
 
+        # --- ACTUALIZAR LA PESTAÑA DEL PLANIFICADOR ---
+        if hasattr(self, 'lbl_plan_res'):
+            if p.get("active"):
+                rest = p['restante']
+                hrs = int(rest // 3600)
+                mins = int((rest % 3600) // 60)
+                estado_vivo = f"⏳ ALERTA ACTIVA EN SERVIDOR: Faltan {hrs}h {mins}m\n\n{p.get('config_txt', '')}"
+                self.lbl_plan_res.config(text=estado_vivo, foreground="#1565C0")
+            else:
+                # Si no hay plan activo y no se ha calculado nada localmente, mostramos default
+                if "ALERTA ACTIVA" in self.lbl_plan_res.cget("text"):
+                    self.lbl_plan_res.config(text="Ningún plan activo. Ingresa datos para calcular.", foreground="black")
     def setup_tab_system(self):
         f = ttk.LabelFrame(self.tab_system, text="Gestión Global"); f.pack(fill='both', padx=20, pady=20)
         ttk.Button(f, text="🔍 INSPECCIONAR CAPTURA", style="Accent.TButton", command=self.inspect_file).pack(pady=10, fill='x')

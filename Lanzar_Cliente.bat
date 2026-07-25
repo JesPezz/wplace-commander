@@ -1,14 +1,11 @@
 @echo off
-title WPlace Commander - Cliente
-echo Iniciando WPlace Commander...
+title WPlace Commander - Depuración
+echo Iniciando WPlace Commander en modo consola para ver errores...
 cd /d "%~dp0"
 
-:: Ejecuta el script de Python
-start /b pythonw wplace_client.py
+:: Ejecuta Python de forma normal para ver la salida en vivo
+python wplace_client.py
 
-:: Si el programa se cierra por error, mantiene la ventana abierta
-if %errorlevel% neq 0 (
-    echo.
-    echo [ERROR] El script se detuvo inesperadamente.
-    pause
-)
+echo.
+echo [PROGRAMA FINALIZADO]
+pause
