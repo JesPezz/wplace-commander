@@ -434,15 +434,22 @@ class WPlaceClient:
         # --- ACTUALIZAR LA PESTAÑA DEL PLANIFICADOR ---
         if hasattr(self, 'lbl_plan_res'):
             if p.get("active"):
-                rest = p['restante']
-                hrs = int(rest // 3600)
-                mins = int((rest % 3600) // 60)
-                estado_vivo = f"⏳ ALERTA ACTIVA EN SERVIDOR: Faltan {hrs}h {mins}m\n\n{p.get('config_txt', '')}"
-                self.lbl_plan_res.config(text=estado_vivo, foreground="#1565C0")
+                config_txt = p.get('config_txt', '')
+                if p.get("expired"):
+                    # Si ya concluyó el tiempo, mostramos en VERDE la confirmación y conservamos todos los datos
+                    estado_completado = f"✅ ¡TIEMPO CUMPLIDO - LISTO PARA PINTAR!\n\n{config_txt}"
+                    self.lbl_plan_res.config(text=estado_completado, foreground="#2E7D32")
+                else:
+                    # Si aún está contando, mostramos en AZUL el tiempo restante
+                    rest = p['restante']
+                    hrs = int(rest // 3600)
+                    mins = int((rest % 3600) // 60)
+                    estado_vivo = f"⏳ ALERTA ACTIVA EN SERVIDOR: Faltan {hrs}h {mins}m\n\n{config_txt}"
+                    self.lbl_plan_res.config(text=estado_vivo, foreground="#1565C0")
             else:
-                # Si no hay plan activo y no se ha calculado nada localmente, mostramos default
-                if "ALERTA ACTIVA" in self.lbl_plan_res.cget("text"):
-                    self.lbl_plan_res.config(text="Ningún plan activo. Ingresa datos para calcular.", foreground="black")
+                if "ALERTA ACTIVA" in self.lbl_plan_res.cget("text") or "TIEMPO CUMPLIDO" in self.lbl_plan_res.cget("text"):
+                    self.lbl_plan_res.config(text="Ingresa tus datos para generar el plan...", foreground="black")
+                    
     def setup_tab_system(self):
         f = ttk.LabelFrame(self.tab_system, text="Gestión Global"); f.pack(fill='both', padx=20, pady=20)
         ttk.Button(f, text="🔍 INSPECCIONAR CAPTURA", style="Accent.TButton", command=self.inspect_file).pack(pady=10, fill='x')

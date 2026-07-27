@@ -83,7 +83,9 @@ def set_plan():
         "px_objetivo": data['px_objetivo'],
         "token": data['token'],
         "chat_id": data['chat_id'],
-        "config_txt": data.get('config_txt', '') 
+        "config_txt": data.get('config_txt', ''),
+        "expired": False,
+        "notified": False
     }
     with open(PLAN_FILE, "w") as f:
         json.dump(plan_data, f)
@@ -97,15 +99,15 @@ def get_plan_status():
             with open(PLAN_FILE, "r") as f:
                 plan = json.load(f)
             restante = plan['alert_time'] - time.time()
-            if restante > 0:
-                return jsonify({
-                    "active": True, 
-                    "restante": restante, 
-                    "px_objetivo": plan['px_objetivo'], 
-                    "config_txt": plan.get('config_txt', '')
-                })
-            else:
-                return jsonify({"active": False})
+            is_expired = plan.get("expired", False) or (restante <= 0)
+            
+            return jsonify({
+                "active": True, 
+                "expired": is_expired,
+                "restante": max(0, restante), 
+                "px_objetivo": plan['px_objetivo'], 
+                "config_txt": plan.get('config_txt', '')
+            })
         except:
             return jsonify({"active": False})
     return jsonify({"active": False})
@@ -120,11 +122,20 @@ def monitor_plan():
                 with open(PLAN_FILE, "r") as f:
                     plan = json.load(f)
                 
-                if time.time() >= plan['alert_time']:
+                # Si ya es la hora y no se ha notificado
+                if time.time() >= plan['alert_time'] and not plan.get("notified", False):
                     url = f"https://api.telegram.org/bot{plan['token']}/sendMessage"
                     msg = f"🚨 *[ALERTA TÁCTICA WPLACE]* 🚨\n\nTu reserva ha alcanzado el objetivo de *{plan['px_objetivo']}* píxeles.\n\n¡Es hora de pintar!"
-                    requests.post(url, json={"chat_id": plan['chat_id'], "text": msg, "parse_mode": "Markdown"})
-                    os.remove(PLAN_FILE)
+                    try:
+                        requests.post(url, json={"chat_id": plan['chat_id'], "text": msg, "parse_mode": "Markdown"})
+                    except Exception as e:
+                        print(f"Error enviando mensaje: {e}")
+                    
+                    # Marcamos como notificado y expirado sin borrar el archivo
+                    plan["notified"] = True
+                    plan["expired"] = True
+                    with open(PLAN_FILE, "w") as f:
+                        json.dump(plan, f)
             except Exception as e:
                 print(f"Error en monitor_plan: {e}")
         time.sleep(5) 
