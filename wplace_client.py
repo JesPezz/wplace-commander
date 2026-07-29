@@ -436,24 +436,45 @@ class WPlaceClient:
             return
             
         item = self.tree.item(selected[0])
-        task_id = item['values'][0]
-        
-        try:
-            r = requests.get(f"{self.server_ip.get().rstrip('/')}/status", timeout=5)
-            if r.status_code != 200:
-                messagebox.showerror("Error", "No se pudo conectar al servidor.")
-                return
-            tasks_data = r.json().get('tasks', [])
-            current_task = next((t for t in tasks_data if t['id'] == task_id), None)
-            if not current_task:
-                messagebox.showerror("Error", "No se encontraron los datos de la tarea.")
-                return
-        except Exception as e:
-            messagebox.showerror("Error", f"Error de conexión: {e}")
+        raw_values = item['values']
+        if not raw_values:
+            messagebox.showwarning("Atención", "No se pudieron obtener los datos de la fila seleccionada.")
             return
 
+        task_id = raw_values[0]
+        
+        # Consultar información de la API
+        try:
+            url = f"{self.server_ip.get().rstrip('/')}/status"
+            r = requests.get(url, timeout=5)
+            if r.status_code != 200:
+                messagebox.showerror("Error", f"Servidor devolvió código {r.status_code}")
+                return
+                
+            tasks_data = r.json().get('tasks', [])
+            
+            # Buscar la tarea comparando de forma flexible (string vs int)
+            current_task = None
+            for t in tasks_data:
+                # Comprobar t.get('id') o t.get('task_id') por compatibilidad
+                tid = t.get('id') if t.get('id') is not None else t.get('task_id')
+                if str(tid).strip() == str(task_id).strip():
+                    current_task = t
+                    break
+
+            if not current_task:
+                # Si no la encuentra en /status, mostrar mensaje informativo detallado
+                messagebox.showerror("Error", f"No se encontraron los datos de la Tarea #{task_id} en el servidor.\nIDs disponibles: {[t.get('id') for t in tasks_data]}")
+                return
+
+        except Exception as e:
+            messagebox.showerror("Error", f"Error de conexión al consultar tarea: {e}")
+            return
+
+        # Extraer la configuración interna de la tarea
         cfg = current_task.get('config', {})
 
+        # Ventana modal de edición
         edit_win = tk.Toplevel(self.root)
         edit_win.title(f"Editar Tarea #{task_id}")
         edit_win.geometry("380x350")
@@ -463,31 +484,37 @@ class WPlaceClient:
         f = ttk.Frame(edit_win, padding=15)
         f.pack(fill='both', expand=True)
 
+        # Nombre
         ttk.Label(f, text="Nombre:").grid(row=0, column=0, sticky='w', pady=5)
         entry_name = ttk.Entry(f, width=25)
         entry_name.insert(0, cfg.get('name', current_task.get('name', '')))
         entry_name.grid(row=0, column=1, pady=5)
 
+        # Intervalo (Min)
         ttk.Label(f, text="Intervalo (Min):").grid(row=1, column=0, sticky='w', pady=5)
         entry_interval = ttk.Entry(f, width=25)
         entry_interval.insert(0, str(cfg.get('interval', 1)))
         entry_interval.grid(row=1, column=1, pady=5)
 
+        # Sensibilidad Alerta (%)
         ttk.Label(f, text="Sensibilidad Alerta (%):").grid(row=2, column=0, sticky='w', pady=5)
         entry_alert = ttk.Entry(f, width=25)
         entry_alert.insert(0, str(cfg.get('alert_pct', 5.0)))
         entry_alert.grid(row=2, column=1, pady=5)
 
+        # Límite MB
         ttk.Label(f, text="Límite MB:").grid(row=3, column=0, sticky='w', pady=5)
         entry_mb = ttk.Entry(f, width=25)
         entry_mb.insert(0, str(cfg.get('limit_mb', 1000)))
         entry_mb.grid(row=3, column=1, pady=5)
 
+        # Duración Horas
         ttk.Label(f, text="Duración (Horas, 0=Inf):").grid(row=4, column=0, sticky='w', pady=5)
         entry_dur = ttk.Entry(f, width=25)
         entry_dur.insert(0, str(cfg.get('duration_hours', 0)))
         entry_dur.grid(row=4, column=1, pady=5)
 
+        # Toggles
         var_timelapse = tk.BooleanVar(value=cfg.get('save_timelapse', True))
         var_sentry = tk.BooleanVar(value=cfg.get('sentry', True))
 
@@ -500,7 +527,7 @@ class WPlaceClient:
         def guardar_cambios():
             try:
                 payload = {
-                    "id": task_id,
+                    "id": int(task_id),
                     "config": {
                         "name": entry_name.get(),
                         "interval": float(entry_interval.get()),

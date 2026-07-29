@@ -50,25 +50,45 @@ def get_status():
 @app.route('/tasks/update', methods=['POST'])
 def update_task():
     try:
-        data = request.json
-        task_id = int(data.get('id'))
-        
-        worker = manager.tasks.get(task_id)
-        if not worker:
-            return jsonify({"status": "error", "message": "Tarea no encontrada"}), 404
-            
+        data = request.json or {}
+        task_id = str(data.get('id', '')).strip()
         new_config = data.get('config', {})
-        worker.config.update(new_config)
-        
-        manifest = manager.load_manifest()
-        for t in manifest:
-            if t.get('id') == task_id:
-                t['config'].update(new_config)
-                break
-        manager.save_manifest(manifest)
-        
-        return jsonify({"status": "ok", "message": "Tarea actualizada correctamente"})
+
+        if not task_id:
+            return jsonify({"status": "error", "message": "ID de tarea inválido"}), 400
+
+        # 1. ACTUALIZAR EN MEMORIA (Worker activo)
+        # Esto aplica los cambios sin tener que detener ni reiniciar la tarea
+        worker = manager.tasks.get(int(task_id)) or manager.tasks.get(task_id)
+        if worker and hasattr(worker, 'config'):
+            worker.config.update(new_config)
+
+        # 2. ACTUALIZAR EN DISCO (Modificando el JSON directamente)
+        manifest_path = "tasks_manifest.json"
+        if os.path.exists(manifest_path):
+            with open(manifest_path, "r") as f:
+                file_content = f.read().strip()
+                # Cargamos el JSON de forma segura. Si está vacío, creamos un diccionario.
+                manifest = json.loads(file_content) if file_content else {}
+            
+            # Protección extra por si el JSON en disco era "null"
+            if manifest is None:
+                manifest = {}
+
+            # Si el ID existe en el archivo, lo actualizamos y guardamos
+            if task_id in manifest:
+                manifest[task_id].update(new_config)
+                with open(manifest_path, "w") as f:
+                    json.dump(manifest, f, indent=4)
+                return jsonify({"status": "ok", "message": f"Tarea #{task_id} actualizada correctamente"})
+            else:
+                return jsonify({"status": "error", "message": f"Tarea #{task_id} no encontrada en JSON"}), 404
+        else:
+            return jsonify({"status": "error", "message": "El archivo tasks_manifest.json no existe"}), 404
+
     except Exception as e:
+        import traceback
+        traceback.print_exc() # Imprime el error exacto en la consola de la Pi
         return jsonify({"status": "error", "message": str(e)}), 500
 
 @app.route('/download_zip')
