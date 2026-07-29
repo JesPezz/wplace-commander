@@ -37,8 +37,10 @@ class TaskWorker:
                 "start_timestamp": self.start_time_ts,
                 "last_saved_path": self.last_saved_path
             }
-            with open(self.get_persistence_file(), "w") as f: json.dump(state, f)
-        except Exception as e: self.log(f"Error Persistencia: {e}")
+            with open(self.get_persistence_file(), "w") as f: 
+                json.dump(state, f)
+        except Exception as e: 
+            self.log(f"Error Persistencia: {e}")
 
     def load_persistence(self):
         f = self.get_persistence_file()
@@ -53,7 +55,8 @@ class TaskWorker:
                         self.last_saved_img = Image.open(path).convert("RGBA")
                         self.last_saved_path = path
                         self.log(f"Memoria visual cargada: {path}")
-            except: pass
+            except: 
+                pass
 
     def save_image_with_metadata(self, img, path):
         c = self.config['coords']
@@ -68,7 +71,8 @@ class TaskWorker:
     def send_telegram(self, title, details, img_path=None):
         token = self.config.get("tg_token")
         chat_id = self.config.get("tg_chat")
-        if not token or not chat_id: return
+        if not token or not chat_id: 
+            return
         
         start_str = datetime.fromtimestamp(self.start_time_ts).strftime('%H:%M') if self.start_time_ts else "--:--"
         dur = float(self.config.get('duration_hours', 0))
@@ -82,7 +86,6 @@ class TaskWorker:
         if self.config.get('save_timelapse'): modos.append("📷 Timelapse")
         if self.config.get('sentry'): modos.append("🛡️ Centinela")
         
-        # Agregamos la fuente al mensaje
         src = self.config.get('source', 'WPlace')
 
         caption = (
@@ -99,10 +102,12 @@ class TaskWorker:
             data = {'chat_id': chat_id, 'caption' if img_path else 'text': caption, 'parse_mode': 'Markdown'}
             files = {'document': open(img_path, 'rb')} if img_path else None
             requests.post(url, data=data, files=files, timeout=10)
-        except Exception as e: self.log(f"Error TG: {e}")
+        except Exception as e: 
+            self.log(f"Error TG: {e}")
 
     def calculate_diff(self, img1, img2):
-        if img1.size != img2.size: return 100.0
+        if img1.size != img2.size: 
+            return 100.0
         i1, i2 = img1.convert("RGB"), img2.convert("RGB")
         pairs = zip(i1.getdata(), i2.getdata())
         dif = sum(abs(c1-c2) for p1,p2 in pairs for c1,c2 in zip(p1,p2))
@@ -110,9 +115,7 @@ class TaskWorker:
 
     def download_area(self):
         c = self.config['coords']
-        
-        # 🧠 SELECCIÓN DINÁMICA DE FUENTE
-        source_target = self.config.get('source', 'WPlace') # Default por compatibilidad
+        source_target = self.config.get('source', 'WPlace')
         if source_target == 'BPlace':
             base_url = "https://bplace.org/files/s0/tiles"
         else:
@@ -131,7 +134,8 @@ class TaskWorker:
                     if r.status_code == 200:
                         tile = Image.open(BytesIO(r.content)).convert("RGBA")
                         full_img.paste(tile, ((tx*1000)-c['x_start'], (ty*1000)-c['y_start']), tile)
-                except: pass
+                except: 
+                    pass
         return full_img
 
     def run_loop(self):
@@ -145,40 +149,80 @@ class TaskWorker:
         self.send_telegram("🚀 *Iniciada*", "El sistema está monitoreando el objetivo.")
 
         while self.running:
-            if self.paused: self.status = "paused"; time.sleep(1); continue
+            if self.paused: 
+                self.status = "paused"
+                time.sleep(1)
+                continue
+                
             dur = float(self.config.get('duration_hours', 0))
             if dur > 0 and (time.time() - self.start_time_ts)/3600 >= dur:
-                self.stop(); self.send_telegram("🏁 *Finalizada*", "Tiempo cumplido."); break
+                self.stop()
+                self.send_telegram("🏁 *Finalizada*", "Tiempo cumplido.")
+                break
 
             try:
                 self.save_persistence()
                 limit_mb = float(self.config.get('limit_mb', 1000))
                 current_mb = sum(os.path.getsize(os.path.join(self.data_dir, f)) for f in os.listdir(self.data_dir)) / (1024*1024)
-                if current_mb > limit_mb: self.stop(); self.send_telegram("🛑 *Detenida*", "Límite de MB excedido."); break
+                if current_mb > limit_mb: 
+                    self.stop()
+                    self.send_telegram("🛑 *Detenida*", "Límite de MB excedido.")
+                    break
 
                 self.log("Descargando...")
                 current = self.download_area()
 
                 if self.config.get('sentry'):
                     sens = float(self.config.get('alert_pct', 5.0))
-                    if self.last_img is None: self.last_img = current.copy()
+                    if self.last_img is None: 
+                        self.last_img = current.copy()
                     else:
                         diff = self.calculate_diff(self.last_img, current)
                         self.current_diff = diff
                         if diff >= sens:
                             path = os.path.join(self.sentry_dir, f"alert_{self.id}.png")
                             self.save_image_with_metadata(current, path)
-                            self.send_telegram("⚠️ *¡ATAQUE DETECTADO!*", f"📉 Variación: `{diff:.2f}%`", path)
+                            
+                            # --- DIAGNÓSTICO MATEMÁTICO DE DAÑO ---
+                            c = self.config['coords']
+                            ancho = c['x_end'] - c['x_start']
+                            alto = c['y_end'] - c['y_start']
+                            px_danados = int((ancho * alto) * (diff / 100.0))
+                            
+                            diag_txt = f"📉 *Variación:* `{diff:.2f}%` (~`{px_danados} px` alterados)\n"
+                            
+                            if os.path.exists("plan_state.json"):
+                                try:
+                                    with open("plan_state.json", "r") as f:
+                                        p_data = json.load(f)
+                                    restante_sec = max(0, p_data['alert_time'] - time.time())
+                                    px_obj = p_data['px_objetivo']
+                                    px_disp = max(0, px_obj - int(restante_sec / 30))
+                                    
+                                    diag_txt += f"🔋 *Reserva disponible estimada:* `{px_disp} px`\n"
+                                    if px_disp >= px_danados:
+                                        diag_txt += "⚡ *Diagnóstico:* ¡Reserva suficiente! Puedes reparar el 100% del daño inmediatamente."
+                                    else:
+                                        faltan = px_danados - px_disp
+                                        hrs_req = round((faltan * 30) / 3600.0, 2)
+                                        diag_txt += f"⚠️ *Diagnóstico:* Te faltan `{faltan} px`. Tiempo para recuperar la reserva necesaria: `{hrs_req} hrs`."
+                                except Exception:
+                                    pass
+
+                            self.send_telegram("⚠️ *¡ATAQUE DETECTADO!*", diag_txt, path)
                             self.last_img = current.copy()
                             self.log(f"ALERTA. Dif: {diff}%")
 
                 if self.config.get('save_timelapse'):
                     should_save = False
-                    if self.last_saved_img is None: should_save = True
+                    if self.last_saved_img is None: 
+                        should_save = True
                     else:
                         d_t = self.calculate_diff(self.last_saved_img, current)
-                        if d_t > 0.0001: should_save = True
-                        else: self.log("Sin cambios visuales.")
+                        if d_t > 0.0001: 
+                            should_save = True
+                        else: 
+                            self.log("Sin cambios visuales.")
 
                     if should_save:
                         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -190,23 +234,35 @@ class TaskWorker:
                         self.save_persistence()
                         self.log(f"Guardado: {path}")
 
-            except Exception as e: self.log(f"Error: {e}"); self.status = "error"
+            except Exception as e: 
+                self.log(f"Error: {e}")
+                self.status = "error"
+                
             time.sleep(self.config.get('interval', 1) * 60)
 
-    def start(self): threading.Thread(target=self.run_loop, daemon=True).start()
-    def stop(self): self.running = False; self.status = "stopped"; self.save_persistence()
+    def start(self): 
+        threading.Thread(target=self.run_loop, daemon=True).start()
+        
+    def stop(self): 
+        self.running = False
+        self.status = "stopped"
+        self.save_persistence()
     
     def get_info(self):
         dur = float(self.config.get('duration_hours', 0))
         rest = "Inf"
-        if dur > 0 and self.start_time_ts: rest = f"{max(0, dur - (time.time()-self.start_time_ts)/3600):.2f}h"
+        if dur > 0 and self.start_time_ts: 
+            rest = f"{max(0, dur - (time.time()-self.start_time_ts)/3600):.2f}h"
         m = []
         if self.config.get('save_timelapse'): m.append("T")
         if self.config.get('sentry'): m.append("S")
         return {
-            "id": self.id, "name": self.config.get("name"), 
-            "source": self.config.get('source', 'WPlace'), # Info para el cliente
+            "id": self.id, 
+            "name": self.config.get("name"), 
+            "source": self.config.get('source', 'WPlace'),
             "mode": "+".join(m),
-            "status": self.status, "captures": self.captures_count,
-            "restante": rest, "diff_actual": f"{self.current_diff:.4f}%"
+            "status": self.status, 
+            "captures": self.captures_count,
+            "restante": rest, 
+            "diff_actual": f"{self.current_diff:.4f}%"
         }

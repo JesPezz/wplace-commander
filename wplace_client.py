@@ -57,12 +57,12 @@ class WPlaceClient:
         self.tab_manager = ttk.Frame(self.notebook)
         self.tab_system = ttk.Frame(self.notebook)
         self.tab_planner = ttk.Frame(self.notebook)
-        self.tab_telegram = ttk.Frame(self.notebook)  # NUEVA PESTAÑA PARA TELEGRAM
+        self.tab_telegram = ttk.Frame(self.notebook)  
         
         self.notebook.add(self.tab_new, text="🔭 Misión")
         self.notebook.add(self.tab_manager, text="📡 Radar de Tareas")
         self.notebook.add(self.tab_planner, text="📅 Planificador")
-        self.notebook.add(self.tab_telegram, text="📱 Telegram") # AÑADIDO AL MENÚ
+        self.notebook.add(self.tab_telegram, text="📱 Telegram") 
         self.notebook.add(self.tab_system, text="⚙️ Sistema")
         
         self.setup_tab_new()
@@ -74,7 +74,7 @@ class WPlaceClient:
         self.running = True
         threading.Thread(target=self.monitor_loop, daemon=True).start()
 
-       # ================= PESTAÑA TELEGRAM =================
+    # ================= PESTAÑA TELEGRAM =================
     def setup_tab_telegram(self):
         f = ttk.LabelFrame(self.tab_telegram, text="Credenciales Globales de Telegram")
         f.pack(fill='both', expand=True, padx=20, pady=20)
@@ -97,37 +97,78 @@ class WPlaceClient:
         self.guardar_config()
         messagebox.showinfo("Guardado", "Credenciales de Telegram guardadas globalmente.\nAhora aplicarán para Misiones y Planificador.")
 
-        # ================= PESTAÑA PLANIFICADOR =================
+    # ================= PESTAÑA PLANIFICADOR CON DIAGNÓSTICO =================
     def setup_tab_planner(self):
         f = ttk.LabelFrame(self.tab_planner, text="Calculadora Estratégica Híbrida")
-        f.pack(fill='both', expand=True, padx=20, pady=20)
+        f.pack(fill='both', expand=True, padx=20, pady=10)
         
-        ttk.Label(f, text="Píxeles Actuales:").grid(row=0, column=0, padx=10, pady=10, sticky='e')
+        ttk.Label(f, text="Píxeles Actuales:").grid(row=0, column=0, padx=10, pady=5, sticky='e')
         self.pl_actuales = ttk.Entry(f, width=15)
-        self.pl_actuales.grid(row=0, column=1, padx=10, pady=10, sticky='w')
+        self.pl_actuales.grid(row=0, column=1, padx=10, pady=5, sticky='w')
         
-        ttk.Label(f, text="Capacidad Máxima:").grid(row=1, column=0, padx=10, pady=10, sticky='e')
+        ttk.Label(f, text="Capacidad Máxima:").grid(row=1, column=0, padx=10, pady=5, sticky='e')
         self.pl_max = ttk.Entry(f, width=15)
-        self.pl_max.insert(0, "7000")
-        self.pl_max.grid(row=1, column=1, padx=10, pady=10, sticky='w')
+        self.pl_max.insert(0, "7404")
+        self.pl_max.grid(row=1, column=1, padx=10, pady=5, sticky='w')
         
-        ttk.Label(f, text="Objetivo de Disparo (%):").grid(row=2, column=0, padx=10, pady=10, sticky='e')
+        ttk.Label(f, text="Objetivo de Disparo (%):").grid(row=2, column=0, padx=10, pady=5, sticky='e')
         self.pl_obj = ttk.Entry(f, width=15)
         self.pl_obj.insert(0, "85")
-        self.pl_obj.grid(row=2, column=1, padx=10, pady=10, sticky='w')
+        self.pl_obj.grid(row=2, column=1, padx=10, pady=5, sticky='w')
         
-        ttk.Label(f, text="Reserva de Defensa (%):").grid(row=3, column=0, padx=10, pady=10, sticky='e')
+        ttk.Label(f, text="Reserva de Defensa (%):").grid(row=3, column=0, padx=10, pady=5, sticky='e')
         self.pl_res = ttk.Entry(f, width=15)
         self.pl_res.insert(0, "25")
-        self.pl_res.grid(row=3, column=1, padx=10, pady=10, sticky='w')
+        self.pl_res.grid(row=3, column=1, padx=10, pady=5, sticky='w')
         
-        ttk.Button(f, text="CALCULAR Y ACTIVAR ALERTA", style="Accent.TButton", command=self.calcular_plan).grid(row=4, column=0, columnspan=2, pady=20)
+        ttk.Button(f, text="CALCULAR Y ACTIVAR ALERTA", style="Accent.TButton", command=self.calcular_plan).grid(row=4, column=0, columnspan=2, pady=10)
         
+        # --- SECCIÓN DE EVALUACIÓN DE DAÑO / ATAQUE ---
+        f_diag = ttk.LabelFrame(f, text="🛡️ Evaluador de Daños por Ataque")
+        f_diag.grid(row=5, column=0, columnspan=2, sticky='ew', padx=10, pady=10)
+        
+        ttk.Label(f_diag, text="Píxeles Dañados o % de Ataque:").grid(row=0, column=0, padx=5, pady=5, sticky='e')
+        self.entry_damage = ttk.Entry(f_diag, width=15)
+        self.entry_damage.insert(0, "2000")
+        self.entry_damage.grid(row=0, column=1, padx=5, pady=5, sticky='w')
+        
+        ttk.Button(f_diag, text="🔍 ANALIZAR CAPACIDAD DE REPARACIÓN", style="Blue.TButton", command=self.analizar_dano).grid(row=0, column=2, padx=10, pady=5)
+
         res_f = ttk.LabelFrame(f, text="Resultados y Cronograma")
-        res_f.grid(row=5, column=0, columnspan=2, sticky='ew', padx=10, pady=10)
+        res_f.grid(row=6, column=0, columnspan=2, sticky='ew', padx=10, pady=10)
         
         self.lbl_plan_res = ttk.Label(res_f, text="Ingresa tus datos para generar el plan...", justify="left", font=('Segoe UI', 10))
         self.lbl_plan_res.pack(padx=15, pady=15, anchor="w")
+
+    def analizar_dano(self):
+        try:
+            px_danados = int(self.entry_damage.get())
+            actuales = int(self.pl_actuales.get() or "0")
+            
+            if actuales >= px_danados:
+                sobrantes = actuales - px_danados
+                messagebox.showinfo(
+                    "✅ REPARACIÓN VIABLE",
+                    f"¡Tienes suficientes píxeles para reparar el daño de inmediato!\n\n"
+                    f"• Píxeles necesarios: {px_danados} px\n"
+                    f"• Reserva actual: {actuales} px\n"
+                    f"• Te quedarán: {sobrantes} px en reserva después de reparar."
+                )
+            else:
+                faltantes = px_danados - actuales
+                minutos_espera = (faltantes * 30) // 60
+                horas_espera = round(minutos_espera / 60.0, 2)
+                
+                messagebox.showwarning(
+                    "⚠️ RESERVA INSUFICIENTE",
+                    f"No tienes suficientes píxeles para reparar el daño completo en este momento.\n\n"
+                    f"• Píxeles necesarios: {px_danados} px\n"
+                    f"• Reserva actual: {actuales} px\n"
+                    f"• Píxeles faltantes: {faltantes} px\n\n"
+                    f"⏳ Tiempo estimado de recarga requerido: {horas_espera} hrs ({minutos_espera} min)."
+                )
+        except ValueError:
+            messagebox.showerror("Error", "Ingresa una cantidad numérica válida de píxeles dañados.")
 
     def calcular_plan(self):
         try:
@@ -181,8 +222,8 @@ class WPlaceClient:
         except ValueError:
             messagebox.showerror("Error de Datos", "Asegúrate de ingresar solo números válidos en las casillas.")
         except Exception as e:
-            # ESTO EVITA LOS ERRORES SILENCIOSOS
             messagebox.showerror("Error Crítico", f"El programa se detuvo por este error de código:\n{str(e)}")
+
     def cargar_config(self):
         if os.path.exists(CONFIG_FILE):
             try: return json.load(open(CONFIG_FILE))
@@ -219,10 +260,9 @@ class WPlaceClient:
         tk.Label(l1, text="IP:").grid(row=0, column=0, sticky='e'); tk.Entry(l1, textvariable=self.server_ip, width=22).grid(row=0, column=1)
         tk.Label(l1, text="Nombre:").grid(row=1, column=0, sticky='e'); self.task_name = tk.Entry(l1, width=22); self.task_name.grid(row=1, column=1)
         
-        # SELECTOR DE OBJETIVO (WPLACE / BPLACE)
         tk.Label(l1, text="Objetivo:").grid(row=2, column=0, sticky='e')
         self.combo_source = ttk.Combobox(l1, values=["BPlace", "WPlace"], state="readonly", width=20)
-        self.combo_source.current(0) # Default BPlace
+        self.combo_source.current(0)
         self.combo_source.grid(row=2, column=1, pady=5)
 
         l2 = ttk.LabelFrame(left, text="2. Coordenadas"); l2.pack(fill='x', padx=5, pady=5)
@@ -276,7 +316,6 @@ class WPlaceClient:
 
     def preview(self):
         try:
-            # 🧠 SELECCIÓN DINÁMICA DE SERVIDOR PARA PREVIEW
             target_source = self.combo_source.get()
             base_url = SOURCES[target_source]
 
@@ -352,7 +391,7 @@ class WPlaceClient:
             c = {"x_start": min(p1[0], p2[0]), "y_start": min(p1[1], p2[1]), "x_end": max(p1[0], p2[0]), "y_end": max(p1[1], p2[1])}
             data = {
                 "name": self.task_name.get(), "coords": c, 
-                "source": self.combo_source.get(), # 🧠 ENVÍO DE LA FUENTE (BPlace/WPlace)
+                "source": self.combo_source.get(),
                 "save_timelapse": self.chk_time.get(), "sentry": self.chk_sent.get(), 
                 "interval": int(self.sp_int.get()), "duration_hours": float(self.sp_dur.get()), 
                 "limit_mb": int(self.sp_mb.get()), "alert_pct": float(self.sp_sens.get()), 
@@ -368,9 +407,11 @@ class WPlaceClient:
         self.lbl_cpu = tk.Label(f, text="CPU: --%", fg="blue", font=("Arial", 10, "bold")); self.lbl_cpu.pack(side='left', padx=20)
         self.lbl_ram = tk.Label(f, text="RAM: --%", fg="green", font=("Arial", 10, "bold")); self.lbl_ram.pack(side='left', padx=20)
         
+        # --- MENÚ CONTEXTUAL (CLIC DERECHO) ---
         self.ctx_menu = Menu(self.root, tearoff=0)
         self.ctx_menu.add_command(label="▶ Reanudar", command=lambda: self.do_act("start"))
         self.ctx_menu.add_command(label="⏸ Pausar/Detener", command=lambda: self.do_act("stop"))
+        self.ctx_menu.add_command(label="✏️ Editar Tarea", command=self.open_edit_task_dialog) 
         self.ctx_menu.add_command(label="📥 Descargar Datos", command=self.do_down)
         self.ctx_menu.add_separator()
         self.ctx_menu.add_command(label="🗑 ELIMINAR TAREA", command=lambda: self.do_act("delete"))
@@ -380,17 +421,114 @@ class WPlaceClient:
         for c, w in zip(cols, [40, 180, 80, 120, 100, 80, 60, 80, 80]): self.tree.heading(c, text=c); self.tree.column(c, width=w, anchor="center")
         self.tree.pack(fill='both', expand=True, padx=10, pady=5); self.tree.bind("<Button-3>", lambda e: (self.tree.selection_set(self.tree.identify_row(e.y)), self.ctx_menu.post(e.x_root, e.y_root)) if self.tree.identify_row(e.y) else None)
 
+        # --- BARRA DE BOTONES INFERIOR ---
         bf = ttk.Frame(self.tab_manager); bf.pack(fill='x', padx=10, pady=10)
         ttk.Button(bf, text="▶ START", style="Green.TButton", command=lambda: self.do_act("start")).pack(side='left', padx=2)
         ttk.Button(bf, text="⏸ STOP", style="Blue.TButton", command=lambda: self.do_act("stop")).pack(side='left', padx=2)
+        ttk.Button(bf, text="✏️ EDITAR", style="Blue.TButton", command=self.open_edit_task_dialog).pack(side='left', padx=5) 
         ttk.Button(bf, text="📥 ZIP", style="Orange.TButton", command=self.do_down).pack(side='left', padx=2)
         ttk.Button(bf, text="🗑 BORRAR", style="Red.TButton", command=lambda: self.do_act("delete")).pack(side='right', padx=2)
+
+    def open_edit_task_dialog(self):
+        selected = self.tree.selection()
+        if not selected:
+            messagebox.showwarning("Atención", "Selecciona una tarea de la lista para editar.")
+            return
+            
+        item = self.tree.item(selected[0])
+        task_id = item['values'][0]
+        
+        try:
+            r = requests.get(f"{self.server_ip.get().rstrip('/')}/status", timeout=5)
+            if r.status_code != 200:
+                messagebox.showerror("Error", "No se pudo conectar al servidor.")
+                return
+            tasks_data = r.json().get('tasks', [])
+            current_task = next((t for t in tasks_data if t['id'] == task_id), None)
+            if not current_task:
+                messagebox.showerror("Error", "No se encontraron los datos de la tarea.")
+                return
+        except Exception as e:
+            messagebox.showerror("Error", f"Error de conexión: {e}")
+            return
+
+        cfg = current_task.get('config', {})
+
+        edit_win = tk.Toplevel(self.root)
+        edit_win.title(f"Editar Tarea #{task_id}")
+        edit_win.geometry("380x350")
+        edit_win.transient(self.root)
+        edit_win.grab_set()
+
+        f = ttk.Frame(edit_win, padding=15)
+        f.pack(fill='both', expand=True)
+
+        ttk.Label(f, text="Nombre:").grid(row=0, column=0, sticky='w', pady=5)
+        entry_name = ttk.Entry(f, width=25)
+        entry_name.insert(0, cfg.get('name', current_task.get('name', '')))
+        entry_name.grid(row=0, column=1, pady=5)
+
+        ttk.Label(f, text="Intervalo (Min):").grid(row=1, column=0, sticky='w', pady=5)
+        entry_interval = ttk.Entry(f, width=25)
+        entry_interval.insert(0, str(cfg.get('interval', 1)))
+        entry_interval.grid(row=1, column=1, pady=5)
+
+        ttk.Label(f, text="Sensibilidad Alerta (%):").grid(row=2, column=0, sticky='w', pady=5)
+        entry_alert = ttk.Entry(f, width=25)
+        entry_alert.insert(0, str(cfg.get('alert_pct', 5.0)))
+        entry_alert.grid(row=2, column=1, pady=5)
+
+        ttk.Label(f, text="Límite MB:").grid(row=3, column=0, sticky='w', pady=5)
+        entry_mb = ttk.Entry(f, width=25)
+        entry_mb.insert(0, str(cfg.get('limit_mb', 1000)))
+        entry_mb.grid(row=3, column=1, pady=5)
+
+        ttk.Label(f, text="Duración (Horas, 0=Inf):").grid(row=4, column=0, sticky='w', pady=5)
+        entry_dur = ttk.Entry(f, width=25)
+        entry_dur.insert(0, str(cfg.get('duration_hours', 0)))
+        entry_dur.grid(row=4, column=1, pady=5)
+
+        var_timelapse = tk.BooleanVar(value=cfg.get('save_timelapse', True))
+        var_sentry = tk.BooleanVar(value=cfg.get('sentry', True))
+
+        chk_time = ttk.Checkbutton(f, text="📷 Activar Timelapse", variable=var_timelapse)
+        chk_time.grid(row=5, column=0, columnspan=2, sticky='w', pady=5)
+
+        chk_sent = ttk.Checkbutton(f, text="🛡️ Activar Centinela", variable=var_sentry)
+        chk_sent.grid(row=6, column=0, columnspan=2, sticky='w', pady=5)
+
+        def guardar_cambios():
+            try:
+                payload = {
+                    "id": task_id,
+                    "config": {
+                        "name": entry_name.get(),
+                        "interval": float(entry_interval.get()),
+                        "alert_pct": float(entry_alert.get()),
+                        "limit_mb": float(entry_mb.get()),
+                        "duration_hours": float(entry_dur.get()),
+                        "save_timelapse": var_timelapse.get(),
+                        "sentry": var_sentry.get()
+                    }
+                }
+                res = requests.post(f"{self.server_ip.get().rstrip('/')}/tasks/update", json=payload, timeout=5)
+                if res.status_code == 200 and res.json().get('status') == 'ok':
+                    messagebox.showinfo("Éxito", "¡Tarea actualizada correctamente!")
+                    edit_win.destroy()
+                    self.refresh()
+                else:
+                    messagebox.showerror("Error", f"No se pudo guardar: {res.text}")
+            except Exception as ex:
+                messagebox.showerror("Error", f"Fallo al guardar cambios: {ex}")
+
+        ttk.Button(f, text="💾 GUARDAR CAMBIOS", style="Accent.TButton", command=guardar_cambios).grid(row=7, column=0, columnspan=2, pady=15)
 
     def do_act(self, act):
         sel = self.tree.selection()
         if sel: 
             try: requests.post(f"{self.server_ip.get().rstrip('/')}/tasks/{self.tree.item(sel[0])['values'][0]}/{act}", timeout=2); self.refresh()
             except: pass
+            
     def do_down(self):
         sel = self.tree.selection(); 
         if sel: self.descargar_zip(self.tree.item(sel[0])['values'][0])
@@ -436,11 +574,9 @@ class WPlaceClient:
             if p.get("active"):
                 config_txt = p.get('config_txt', '')
                 if p.get("expired"):
-                    # Si ya concluyó el tiempo, mostramos en VERDE la confirmación y conservamos todos los datos
                     estado_completado = f"✅ ¡TIEMPO CUMPLIDO - LISTO PARA PINTAR!\n\n{config_txt}"
                     self.lbl_plan_res.config(text=estado_completado, foreground="#2E7D32")
                 else:
-                    # Si aún está contando, mostramos en AZUL el tiempo restante
                     rest = p['restante']
                     hrs = int(rest // 3600)
                     mins = int((rest % 3600) // 60)

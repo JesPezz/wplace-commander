@@ -1,8 +1,8 @@
+import zipfile, os, json, time, threading, requests, psutil
 from flask import Flask, request, jsonify, send_file
 from task_manager import TaskManager
-import zipfile, os, json, time, threading, requests
 
-# 1. INICIALIZAR LA APP PRIMERO
+# 1. INICIALIZAR LA APP
 app = Flask(__name__)
 manager = TaskManager()
 
@@ -31,8 +31,45 @@ def delete_task(tid):
     return jsonify({"status": "ok" if s else "error", "msg": m})
 
 @app.route('/status', methods=['GET'])
-def global_status(): 
-    return jsonify(manager.get_all_status())
+def get_status():
+    tasks_info = []
+    for t_id, worker in manager.tasks.items():
+        info = worker.get_info()
+        info['config'] = worker.config
+        tasks_info.append(info)
+        
+    cpu = psutil.cpu_percent()
+    ram = psutil.virtual_memory().percent
+    
+    return jsonify({
+        "status": "ok",
+        "system": {"cpu": cpu, "ram": ram},
+        "tasks": tasks_info
+    })
+
+@app.route('/tasks/update', methods=['POST'])
+def update_task():
+    try:
+        data = request.json
+        task_id = int(data.get('id'))
+        
+        worker = manager.tasks.get(task_id)
+        if not worker:
+            return jsonify({"status": "error", "message": "Tarea no encontrada"}), 404
+            
+        new_config = data.get('config', {})
+        worker.config.update(new_config)
+        
+        manifest = manager.load_manifest()
+        for t in manifest:
+            if t.get('id') == task_id:
+                t['config'].update(new_config)
+                break
+        manager.save_manifest(manifest)
+        
+        return jsonify({"status": "ok", "message": "Tarea actualizada correctamente"})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 @app.route('/download_zip')
 def download():
@@ -71,7 +108,7 @@ def delete_photos():
     return jsonify({"status": "photos_deleted"})
 
 # ==========================================
-# 3. NUEVAS RUTAS DEL PLANIFICADOR ESTRATÉGICO
+# 3. RUTAS DEL PLANIFICADOR ESTRATÉGICO
 # ==========================================
 @app.route('/plan/set', methods=['POST'])
 def set_plan():
@@ -122,7 +159,6 @@ def monitor_plan():
                 with open(PLAN_FILE, "r") as f:
                     plan = json.load(f)
                 
-                # Si ya es la hora y no se ha notificado
                 if time.time() >= plan['alert_time'] and not plan.get("notified", False):
                     url = f"https://api.telegram.org/bot{plan['token']}/sendMessage"
                     msg = f"🚨 *[ALERTA TÁCTICA WPLACE]* 🚨\n\nTu reserva ha alcanzado el objetivo de *{plan['px_objetivo']}* píxeles.\n\n¡Es hora de pintar!"
@@ -131,7 +167,6 @@ def monitor_plan():
                     except Exception as e:
                         print(f"Error enviando mensaje: {e}")
                     
-                    # Marcamos como notificado y expirado sin borrar el archivo
                     plan["notified"] = True
                     plan["expired"] = True
                     with open(PLAN_FILE, "w") as f:
