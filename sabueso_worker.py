@@ -13,6 +13,35 @@ HEADERS = {
 
 STATE_FILE = "sabueso_state.json"
 
+# =========================================================
+# 🌐 CONFIGURACIÓN DE TU POOL DE PROXIES RESIDENCIALES
+# =========================================================
+PROXY_CONFIG_FILE = "proxy_config.json"
+
+def get_proxy_config():
+    """Carga credenciales desde un archivo local fuera de Git."""
+    if os.path.exists(PROXY_CONFIG_FILE):
+        try:
+            with open(PROXY_CONFIG_FILE, "r") as f:
+                cfg = json.load(f)
+                if cfg.get("enabled", False):
+                    user = cfg.get("user", "")
+                    password = cfg.get("pass", "")
+                    host = cfg.get("host", "")
+                    port = cfg.get("port", "")
+                    proxy_url = f"http://{user}:{password}@{host}:{port}"
+                    return {
+                        "http": proxy_url,
+                        "https": proxy_url
+                    }
+        except Exception as e:
+            print(f"[Sabueso Proxy Error]: No se pudo cargar el archivo de proxies: {e}")
+    return None
+
+# Carga dinámica al iniciar o ejecutar la tarea
+PROXIES_CONFIG = get_proxy_config()
+
+
 def pixel_a_url(tile_x, tile_y, x, y, zoom=15.0):
     gx = (tile_x * 1000) + x
     gy = (tile_y * 1000) + y
@@ -30,9 +59,8 @@ class SabuesoWorker:
         self.thread = None
         self.state = {
             "status": "idle",
-            "progress": "En espera de objetivo...",
-            "result": None,
-            "target": None,
+            "progress": "En espera de objetivos...",
+            "findings": [],
             "scanned_count": 0,
             "total_count": 0
         }
@@ -52,7 +80,7 @@ class SabuesoWorker:
             data = {
                 "config": config,
                 "visited": list(visited_set),
-                "result": self.state["result"],
+                "findings": self.state["findings"],
                 "status": self.state["status"]
             }
             with open(STATE_FILE, "w") as f:
@@ -66,27 +94,34 @@ class SabuesoWorker:
                 with open(STATE_FILE, "r") as f:
                     data = json.load(f)
                     self.state["status"] = data.get("status", "idle")
-                    self.state["result"] = data.get("result")
+                    self.state["findings"] = data.get("findings", [])
             except:
                 pass
 
-    def start(self, target_id, tile_x, tile_y, x_min=0, x_max=999, y_min=0, y_max=999, tg_token=None, tg_chat=None):
+    def start(self, target_ids, tile_x, tile_y, x_min=0, x_max=999, y_min=0, y_max=999, continuous=True, tg_token=None, tg_chat=None):
         if self.running:
             return False
 
+        # Convertir a lista de strings
+        if isinstance(target_ids, (int, str)):
+            target_ids = [str(target_ids)]
+        else:
+            target_ids = [str(i).strip() for i in target_ids]
+
         self.running = True
         config = {
-            "target_id": str(target_id),
+            "target_ids": target_ids,
             "tile_x": tile_x,
             "tile_y": tile_y,
             "x_min": x_min, "x_max": x_max,
             "y_min": y_min, "y_max": y_max,
+            "continuous": continuous,
             "tg_token": tg_token,
             "tg_chat": tg_chat
         }
 
         self.state["status"] = "searching"
-        self.state["progress"] = "Iniciando rastreo autónomo pasivo..."
+        self.state["progress"] = f"Iniciando rastreo de {len(target_ids)} objetivo(s)..."
 
         self.thread = threading.Thread(target=self._search_loop, args=(config,), daemon=True)
         self.thread.start()
@@ -102,41 +137,35 @@ class SabuesoWorker:
         return self.state
 
     def _search_loop(self, config):
-        # 1. Recuperar memoria previa si coincide con la misma configuración
         visited = set()
         if os.path.exists(STATE_FILE):
             try:
                 with open(STATE_FILE, "r") as f:
                     saved_data = json.load(f)
-                    if saved_data.get("config", {}).get("target_id") == config["target_id"] and \
-                       saved_data.get("config", {}).get("tile_x") == config["tile_x"] and \
+                    if saved_data.get("config", {}).get("tile_x") == config["tile_x"] and \
                        saved_data.get("config", {}).get("tile_y") == config["tile_y"]:
                         visited = set(tuple(p) for p in saved_data.get("visited", []))
             except:
                 pass
 
-        # Universo total de puntos
         all_points = [(x, y) for x in range(config["x_min"], config["x_max"] + 1)
                             for y in range(config["y_min"], config["y_max"] + 1)]
         
         self.state["total_count"] = len(all_points)
 
         while self.running:
-            # Filtrar puntos aún no visitados
             pending = [p for p in all_points if p not in visited]
             self.state["scanned_count"] = len(visited)
 
             if not pending:
-                self.state["status"] = "not_found"
-                self.state["progress"] = f"❌ Área totalmente explorada ({len(visited)} px). No se encontró el ID."
+                self.state["status"] = "completed"
+                self.state["progress"] = f"✅ Área totalmente explorada ({len(visited)} px). Encontrados: {len(self.state['findings'])}"
                 self.running = False
                 break
 
-            # 2. Reordenar dinámicamente los pendientes en cada ciclo
+            # Reordenar de forma aleatoria en cada ciclo
             random.shuffle(pending)
-            
-            # Tomar un lote pequeño (ej. 150 a 200 píxeles por tanda)
-            batch_size = min(random.randint(150, 200), len(pending))
+            batch_size = min(random.randint(150, 250), len(pending))
             current_batch = pending[:batch_size]
 
             for x, y in current_batch:
@@ -146,7 +175,9 @@ class SabuesoWorker:
                 url_api = f"https://backend.wplace.live/s0/pixel/{config['tile_x']}/{config['tile_y']}?x={x}&y={y}"
 
                 try:
-                    res = requests.get(url_api, headers=HEADERS, timeout=5)
+                    # Se envían las peticiones a través de los Proxies Residenciales
+                    res = requests.get(url_api, headers=HEADERS, proxies=PROXIES_CONFIG, timeout=8)
+                    
                     if res.status_code == 200:
                         data = res.json()
                         painted_by = data.get("paintedBy", {})
@@ -155,54 +186,51 @@ class SabuesoWorker:
 
                         visited.add((x, y))
                         self.state["scanned_count"] = len(visited)
-                        self.state["progress"] = f" Escaneados: {len(visited)}/{len(all_points)} | Último: ({x},{y}) -> {uname}"
+                        self.state["progress"] = f"Escaneados: {len(visited)}/{len(all_points)} | Hallazgos: {len(self.state['findings'])} | Ult: ({x},{y})"
 
-                        # ¡OBJETIVO LOCALIZADO!
-                        if uid == config["target_id"]:
+                        # Verificar si coincide con alguno de la lista de IDs
+                        if uid in config["target_ids"]:
                             url_mapa = pixel_a_url(config["tile_x"], config["tile_y"], x, y)
-                            self.state["result"] = {
+                            hallazgo = {
                                 "uname": uname,
                                 "uid": uid,
                                 "coordenadas": f"Tile ({config['tile_x']}, {config['tile_y']}) -> X={x}, Y={y}",
-                                "url": url_mapa
+                                "url": url_mapa,
+                                "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")
                             }
-                            self.state["status"] = "found"
-                            self.state["progress"] = "🎯 ¡OBJETIVO LOCALIZADO!"
+                            
+                            self.state["findings"].append(hallazgo)
                             self.save_state(visited, config)
 
-                            # Enviar notificación a Telegram
+                            # Enviar alerta instantánea a Telegram
                             msg = (
-                                f"🎯 *¡SABUESO LOCALIZÓ AL OBJETIVO!*\n\n"
+                                f"🎯 *¡HALLAZGO DE SABUESO!* (#{len(self.state['findings'])})\n\n"
                                 f"👤 *Usuario:* `{uname}`\n"
                                 f"🆔 *ID:* `{uid}`\n"
-                                f"📍 *Ubicación:* Tile ({config['tile_x']}, {config['tile_y']}) -> X={x}, Y={y}\n"
-                                f"📊 *Progreso:* {len(visited)} de {len(all_points)} píxeles evaluados\n\n"
+                                f"📍 *Coordenada:* Tile ({config['tile_x']}, {config['tile_y']}) -> X={x}, Y={y}\n\n"
                                 f"🌐 *Link directo al mapa:*\n{url_mapa}"
                             )
                             self.send_telegram(config.get("tg_token"), config.get("tg_chat"), msg)
-                            self.running = False
-                            return
+
+                            if not config.get("continuous", True):
+                                self.state["status"] = "found"
+                                self.state["progress"] = "🎯 Objetivo localizado."
+                                self.running = False
+                                return
 
                     elif res.status_code == 429:
-                        self.state["progress"] = "⚠️ Rate limit. Pausando 30s..."
-                        time.sleep(30)
+                        self.state["progress"] = "⚠️ Rate limit. Pausando 15s..."
+                        time.sleep(15)
 
-                except Exception:
+                except Exception as e:
                     pass
 
-                # Pausa humana por píxel (0.8s a 1.5s)
-                time.sleep(random.uniform(0.8, 1.5))
+                # Pausa humana leve por píxel (gracias a los proxies residenciales no necesitamos pausas largas)
+                time.sleep(random.uniform(0.3, 0.7))
 
-            # Guardar progreso en disco al terminar el lote
             self.save_state(visited, config)
 
             if self.running:
-                # 3. PERIODO DE DESCANSO LARGO ENTRE LOTES (15 a 25 minutos)
-                descanso_min = random.randint(15, 25)
-                self.state["progress"] = f"💤 Lote completado. Enfriando IP durante {descanso_min} min para evitar bloqueos..."
-                
-                # Desglose de espera en tramos cortos para permitir abortar el hilo si el usuario lo pide
-                for _ in range(descanso_min * 60):
-                    if not self.running:
-                        break
-                    time.sleep(1)
+                # Con proxies residenciales, el tiempo de reposo se reduce a solo 10 a 30 segundos entre lotes
+                self.state["progress"] = f"🔄 Lote completado. Rotando proxy/IP... Hallazgos: {len(self.state['findings'])}"
+                time.sleep(random.randint(10, 30))

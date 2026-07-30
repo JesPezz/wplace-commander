@@ -13,6 +13,10 @@ wplace_capturas_local/
 wplace_state.json
 client_config.json
 *.log
+proxy_config.json
+sabueso_state.json
+plan_state.json
+*.json.local
 
 # Entornos virtuales (si usas venv)
 venv/
