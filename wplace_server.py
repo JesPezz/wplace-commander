@@ -179,6 +179,21 @@ def get_plan_status():
 @app.route('/sabueso/start', methods=['POST'])
 def sabueso_start():
     data = request.json
+    
+    # Intentar obtener credenciales de Telegram desde el plan o la petición
+    tg_token = data.get('tg_token')
+    tg_chat = data.get('tg_chat')
+    
+    # Si no vienen en el payload, leerlas de plan_state.json si existe
+    if not tg_token and os.path.exists("plan_state.json"):
+        try:
+            with open("plan_state.json") as f:
+                p = json.load(f)
+                tg_token = p.get("token")
+                tg_chat = p.get("chat_id")
+        except:
+            pass
+
     success = sabueso_engine.start(
         target_id=data.get('target_id'),
         tile_x=data.get('tile_x'),
@@ -186,11 +201,13 @@ def sabueso_start():
         x_min=data.get('xmin', 0),
         x_max=data.get('xmax', 999),
         y_min=data.get('ymin', 0),
-        y_max=data.get('ymax', 999)
+        y_max=data.get('ymax', 999),
+        tg_token=tg_token,
+        tg_chat=tg_chat
     )
     if success:
-        return jsonify({"status": "ok", "msg": "Rastreo iniciado."})
-    return jsonify({"status": "error", "msg": "El Sabueso ya está corriendo."})
+        return jsonify({"status": "ok", "msg": "Sabueso pasivo liberado."})
+    return jsonify({"status": "error", "msg": "El Sabueso ya está en marcha."})
 
 @app.route('/sabueso/stop', methods=['POST'])
 def sabueso_stop():
