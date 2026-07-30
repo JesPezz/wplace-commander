@@ -57,11 +57,13 @@ class WPlaceClient:
         self.tab_manager = ttk.Frame(self.notebook)
         self.tab_system = ttk.Frame(self.notebook)
         self.tab_planner = ttk.Frame(self.notebook)
-        self.tab_telegram = ttk.Frame(self.notebook)  
+        self.tab_telegram = ttk.Frame(self.notebook) 
+        self.tab_sabueso = ttk.Frame(self.notebook)
         
         self.notebook.add(self.tab_new, text="🔭 Misión")
         self.notebook.add(self.tab_manager, text="📡 Radar de Tareas")
         self.notebook.add(self.tab_planner, text="📅 Planificador")
+        self.notebook.add(self.tab_sabueso, text="🐶 Sabueso")
         self.notebook.add(self.tab_telegram, text="📱 Telegram") 
         self.notebook.add(self.tab_system, text="⚙️ Sistema")
         
@@ -70,6 +72,7 @@ class WPlaceClient:
         self.setup_tab_planner()
         self.setup_tab_telegram()
         self.setup_tab_system()
+        self.setup_tab_sabueso()
         
         self.running = True
         threading.Thread(target=self.monitor_loop, daemon=True).start()
@@ -99,30 +102,136 @@ class WPlaceClient:
 
     # ================= PESTAÑA PLANIFICADOR CON DIAGNÓSTICO =================
     def setup_tab_planner(self):
-        f = ttk.LabelFrame(self.tab_planner, text="Calculadora Estratégica Híbrida")
-        f.pack(fill='both', expand=True, padx=20, pady=10)
+        # Marco principal
+        main_f = ttk.Frame(self.tab_planner)
+        main_f.pack(fill='both', expand=True, padx=15, pady=10)
+
+        # 1. Calculadora principal
+        f = ttk.LabelFrame(main_f, text="Calculadora Estratégica Híbrida")
+        f.pack(fill='x', padx=5, pady=5)
         
-        ttk.Label(f, text="Píxeles Actuales:").grid(row=0, column=0, padx=10, pady=5, sticky='e')
-        self.pl_actuales = ttk.Entry(f, width=15)
+        f_in = ttk.Frame(f)
+        f_in.pack(fill='x', padx=10, pady=5)
+
+        ttk.Label(f_in, text="Píxeles Actuales:").grid(row=0, column=0, padx=10, pady=5, sticky='e')
+        self.pl_actuales = ttk.Entry(f_in, width=15)
         self.pl_actuales.grid(row=0, column=1, padx=10, pady=5, sticky='w')
         
-        ttk.Label(f, text="Capacidad Máxima:").grid(row=1, column=0, padx=10, pady=5, sticky='e')
-        self.pl_max = ttk.Entry(f, width=15)
+        ttk.Label(f_in, text="Capacidad Máxima:").grid(row=1, column=0, padx=10, pady=5, sticky='e')
+        self.pl_max = ttk.Entry(f_in, width=15)
         self.pl_max.insert(0, "7404")
         self.pl_max.grid(row=1, column=1, padx=10, pady=5, sticky='w')
         
-        ttk.Label(f, text="Objetivo de Disparo (%):").grid(row=2, column=0, padx=10, pady=5, sticky='e')
-        self.pl_obj = ttk.Entry(f, width=15)
+        ttk.Label(f_in, text="Objetivo de Disparo (%):").grid(row=2, column=0, padx=10, pady=5, sticky='e')
+        self.pl_obj = ttk.Entry(f_in, width=15)
         self.pl_obj.insert(0, "85")
         self.pl_obj.grid(row=2, column=1, padx=10, pady=5, sticky='w')
         
-        ttk.Label(f, text="Reserva de Defensa (%):").grid(row=3, column=0, padx=10, pady=5, sticky='e')
-        self.pl_res = ttk.Entry(f, width=15)
+        ttk.Label(f_in, text="Reserva de Defensa (%):").grid(row=3, column=0, padx=10, pady=5, sticky='e')
+        self.pl_res = ttk.Entry(f_in, width=15)
         self.pl_res.insert(0, "25")
         self.pl_res.grid(row=3, column=1, padx=10, pady=5, sticky='w')
         
-        ttk.Button(f, text="CALCULAR Y ACTIVAR ALERTA", style="Accent.TButton", command=self.calcular_plan).grid(row=4, column=0, columnspan=2, pady=10)
+        ttk.Button(f, text="CALCULAR Y ACTIVAR ALERTA", style="Accent.TButton", command=self.calcular_plan).pack(pady=10)
         
+        # 2. Evaluación de daño / ataque
+        f_diag = ttk.LabelFrame(main_f, text="🛡️ Evaluador de Daños por Ataque")
+        f_diag.pack(fill='x', padx=5, pady=5)
+        
+        f_diag_in = ttk.Frame(f_diag)
+        f_diag_in.pack(fill='x', padx=10, pady=5)
+        
+        ttk.Label(f_diag_in, text="Píxeles Dañados o % de Ataque:").grid(row=0, column=0, padx=5, pady=5, sticky='e')
+        self.entry_damage = ttk.Entry(f_diag_in, width=15)
+        self.entry_damage.insert(0, "2000")
+        self.entry_damage.grid(row=0, column=1, padx=5, pady=5, sticky='w')
+        
+        ttk.Button(f_diag_in, text="🔍 ANALIZAR CAPACIDAD DE REPARACIÓN", style="Blue.TButton", command=self.analizar_dano).grid(row=0, column=2, padx=15, pady=5)
+
+        # 3. Resultados y Cronograma
+        res_f = ttk.LabelFrame(main_f, text="Resultados y Cronograma")
+        res_f.pack(fill='both', expand=True, padx=5, pady=5)
+        
+        self.lbl_plan_res = ttk.Label(res_f, text="Ingresa tus datos para generar el plan...", justify="left", font=('Segoe UI', 10))
+        self.lbl_plan_res.pack(padx=15, pady=15, anchor="w")
+        
+# ================= PESTAÑA SABUESO =================
+    def setup_tab_sabueso(self):
+        paned = tk.PanedWindow(self.tab_sabueso, orient=tk.HORIZONTAL, sashwidth=6, sashrelief=tk.RAISED, bg="#d0d0d0")
+        paned.pack(fill='both', expand=True, padx=5, pady=5)
+
+        # PANEL IZQUIERDO (Controles)
+        left = ttk.Frame(paned, width=350)
+        paned.add(left, minsize=320)
+        
+        f_params = ttk.LabelFrame(left, text="Parámetros de Rastreo")
+        f_params.pack(fill='x', padx=10, pady=10)
+        
+        ttk.Label(f_params, text="ID Usuario Objetivo:").grid(row=0, column=0, sticky='e', padx=5, pady=5)
+        self.sb_user_id = ttk.Entry(f_params, width=15)
+        self.sb_user_id.grid(row=0, column=1, sticky='w', pady=5)
+        
+        ttk.Label(f_params, text="Tile X:").grid(row=1, column=0, sticky='e', padx=5, pady=5)
+        self.sb_tile_x = ttk.Entry(f_params, width=10)
+        self.sb_tile_x.grid(row=1, column=1, sticky='w', pady=5)
+        
+        ttk.Label(f_params, text="Tile Y:").grid(row=2, column=0, sticky='e', padx=5, pady=5)
+        self.sb_tile_y = ttk.Entry(f_params, width=10)
+        self.sb_tile_y.grid(row=2, column=1, sticky='w', pady=5)
+        
+        f_rango = ttk.LabelFrame(left, text="Rango Interno (Opcional)")
+        f_rango.pack(fill='x', padx=10, pady=5)
+        
+        ttk.Label(f_rango, text="X Min/Max:").grid(row=0, column=0, padx=5, pady=5)
+        self.sb_xmin = ttk.Entry(f_rango, width=6); self.sb_xmin.insert(0, "0"); self.sb_xmin.grid(row=0, column=1)
+        self.sb_xmax = ttk.Entry(f_rango, width=6); self.sb_xmax.insert(0, "999"); self.sb_xmax.grid(row=0, column=2)
+        
+        ttk.Label(f_rango, text="Y Min/Max:").grid(row=1, column=0, padx=5, pady=5)
+        self.sb_ymin = ttk.Entry(f_rango, width=6); self.sb_ymin.insert(0, "0"); self.sb_ymin.grid(row=1, column=1)
+        self.sb_ymax = ttk.Entry(f_rango, width=6); self.sb_ymax.insert(0, "999"); self.sb_ymax.grid(row=1, column=2)
+
+        bf = ttk.Frame(left)
+        bf.pack(fill='x', padx=10, pady=20)
+        ttk.Button(bf, text="🐶 SOLTAR SABUESO", style="Accent.TButton", command=self.lanzar_sabueso).pack(fill='x', pady=2)
+        ttk.Button(bf, text="🛑 ABORTAR RASTREO", style="Danger.TButton", command=self.detener_sabueso).pack(fill='x', pady=2)
+
+        # PANEL DERECHO (Resultados en vivo)
+        right = ttk.LabelFrame(paned, text="Terminal de Rastreo")
+        paned.add(right, stretch="always")
+        
+        self.lbl_sb_status = ttk.Label(right, text="Estado: EN ESPERA", font=('Consolas', 12, 'bold'), foreground="gray")
+        self.lbl_sb_status.pack(pady=10)
+        
+        self.lbl_sb_prog = ttk.Label(right, text="Esperando instrucciones...", font=('Consolas', 10))
+        self.lbl_sb_prog.pack(pady=5)
+        
+        self.txt_sb_result = tk.Text(right, height=10, width=50, font=('Consolas', 11), bg="#1e1e1e", fg="#4CAF50")
+        self.txt_sb_result.pack(fill='both', expand=True, padx=10, pady=10)
+
+    def lanzar_sabueso(self):
+        try:
+            payload = {
+                "target_id": int(self.sb_user_id.get()),
+                "tile_x": int(self.sb_tile_x.get()),
+                "tile_y": int(self.sb_tile_y.get()),
+                "xmin": int(self.sb_xmin.get()), "xmax": int(self.sb_xmax.get()),
+                "ymin": int(self.sb_ymin.get()), "ymax": int(self.sb_ymax.get())
+            }
+            r = requests.post(f"{self.server_ip.get().rstrip('/')}/sabueso/start", json=payload, timeout=3)
+            if r.status_code == 200 and r.json().get('status') == 'ok':
+                self.txt_sb_result.delete(1.0, tk.END)
+                messagebox.showinfo("Iniciado", "El sabueso ha comenzado a buscar de forma sigilosa.")
+            else:
+                messagebox.showerror("Error", r.json().get('msg', 'Error desconocido'))
+        except Exception as e:
+            messagebox.showerror("Datos inválidos", f"Revisa los números: {e}")
+
+    def detener_sabueso(self):
+        try:
+            requests.post(f"{self.server_ip.get().rstrip('/')}/sabueso/stop", timeout=3)
+        except:
+            pass
+
         # --- SECCIÓN DE EVALUACIÓN DE DAÑO / ATAQUE ---
         f_diag = ttk.LabelFrame(f, text="🛡️ Evaluador de Daños por Ataque")
         f_diag.grid(row=5, column=0, columnspan=2, sticky='ew', padx=10, pady=10)
@@ -570,15 +679,17 @@ class WPlaceClient:
         try:
             r = requests.get(f"{self.server_ip.get().rstrip('/')}/status", timeout=2)
             r_plan = requests.get(f"{self.server_ip.get().rstrip('/')}/plan/status", timeout=2)
+            r_sab = requests.get(f"{self.server_ip.get().rstrip('/')}/sabueso/status", timeout=2) # NUEVO LLAMADO
             
             if r.status_code == 200:
                 d = r.json()
                 p = r_plan.json() if r_plan.status_code == 200 else {"active": False}
-                self.root.after(0, lambda: self.upd_ui(d, p))
+                s = r_sab.json() if r_sab.status_code == 200 else None
+                self.root.after(0, lambda: self.upd_ui(d, p, s)) # PASAMOS LA 's'
         except: 
             pass
 
-    def upd_ui(self, d, p):
+    def upd_ui(self, d, p, s=None): # <-- ¡AQUÍ ESTÁ EL CAMBIO CLAVE!
         sid = None; sel = self.tree.selection()
         if sel: sid = self.tree.item(sel[0])['values'][0]
         self.lbl_cpu.config(text=f"CPU: {d['system']['cpu']}%"); self.lbl_ram.config(text=f"RAM: {d['system']['ram']}%")
@@ -612,7 +723,33 @@ class WPlaceClient:
             else:
                 if "ALERTA ACTIVA" in self.lbl_plan_res.cget("text") or "TIEMPO CUMPLIDO" in self.lbl_plan_res.cget("text"):
                     self.lbl_plan_res.config(text="Ingresa tus datos para generar el plan...", foreground="black")
-                    
+
+        # --- FUNCIÓN PARA EL SABUESO ---
+        if s and hasattr(self, 'lbl_sb_status'):
+            # Colores según el estado
+            color = "gray"
+            if s['status'] == "searching": color = "blue"
+            elif s['status'] == "found": color = "green"
+            elif s['status'] == "not_found": color = "red"
+            
+            self.lbl_sb_status.config(text=f"Estado: {s['status'].upper()}", foreground=color)
+            self.lbl_sb_prog.config(text=s['progress'])
+            
+            # Si encontró al objetivo y el cuadro de texto está vacío, lo llenamos
+            if s['status'] == "found" and s['result']:
+                current_text = self.txt_sb_result.get(1.0, tk.END).strip()
+                if not current_text:
+                    res = s['result']
+                    info = (
+                        f"🎯 OBJETIVO ENCONTRADO\n"
+                        f"{'-'*40}\n"
+                        f"Usuario: {res['uname']} (ID: {res['uid']})\n"
+                        f"Ubicación: {res['coordenadas']}\n\n"
+                        f"🌐 LINK DIRECTO AL MAPA:\n"
+                        f"{res['url']}"
+                    )
+                    self.txt_sb_result.insert(tk.END, info)
+
     def setup_tab_system(self):
         f = ttk.LabelFrame(self.tab_system, text="Gestión Global"); f.pack(fill='both', padx=20, pady=20)
         ttk.Button(f, text="🔍 INSPECCIONAR CAPTURA", style="Accent.TButton", command=self.inspect_file).pack(pady=10, fill='x')

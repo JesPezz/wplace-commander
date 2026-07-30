@@ -1,6 +1,10 @@
 import zipfile, os, json, time, threading, requests, psutil
 from flask import Flask, request, jsonify, send_file
 from task_manager import TaskManager
+from sabueso_worker import SabuesoWorker
+
+# Inicializamos una única instancia del Sabueso globalmente
+sabueso_engine = SabuesoWorker()
 
 # 1. INICIALIZAR LA APP
 app = Flask(__name__)
@@ -168,6 +172,34 @@ def get_plan_status():
         except:
             return jsonify({"active": False})
     return jsonify({"active": False})
+
+    # ==========================================
+# 5. RUTAS DEL SABUESO (RASTREADOR)
+# ==========================================
+@app.route('/sabueso/start', methods=['POST'])
+def sabueso_start():
+    data = request.json
+    success = sabueso_engine.start(
+        target_id=data.get('target_id'),
+        tile_x=data.get('tile_x'),
+        tile_y=data.get('tile_y'),
+        x_min=data.get('xmin', 0),
+        x_max=data.get('xmax', 999),
+        y_min=data.get('ymin', 0),
+        y_max=data.get('ymax', 999)
+    )
+    if success:
+        return jsonify({"status": "ok", "msg": "Rastreo iniciado."})
+    return jsonify({"status": "error", "msg": "El Sabueso ya está corriendo."})
+
+@app.route('/sabueso/stop', methods=['POST'])
+def sabueso_stop():
+    sabueso_engine.stop()
+    return jsonify({"status": "ok"})
+
+@app.route('/sabueso/status', methods=['GET'])
+def sabueso_status():
+    return jsonify(sabueso_engine.get_status())
 
 # ==========================================
 # 4. HILO VIGILANTE Y ARRANQUE
