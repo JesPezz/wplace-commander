@@ -32,7 +32,7 @@ class SabuesoTab(ttk.Frame):
         self.cell_pixels = {} # Guardar IDs de rectángulos del Canvas
         self.is_monitoring = False
         self.config_loaded = False # 👈 Bandera para sincronizar la primera vez
-        
+        self.seen_findings = set()
         self._build_ui()
         
         # Iniciar monitoreo automático desde el arranque de la app
@@ -116,10 +116,19 @@ class SabuesoTab(ttk.Frame):
         btn_copy = ttk.Button(right_panel, text="📋 Copiar Link Seleccionado", command=self.copy_selected_link)
         btn_copy.pack(fill=tk.X, pady=2)
 
+        # --- TERMINAL DE LOGS EN VIVO ---
+        log_frame = ttk.LabelFrame(self, text=" 🖥️ Terminal de Sabuesos (Live) ", padding=5)
+        log_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=5, pady=5)
+        
+        self.txt_logs = tk.Text(log_frame, height=7, bg="#0c0c0c", fg="#00ff00", font=("Consolas", 9))
+        self.txt_logs.pack(fill=tk.BOTH, expand=True, pady=2)
+
     def _init_radar_grid(self):
-        """Dibuja la cuadrícula 50x50 en gris oscuro dentro del Canvas."""
         self.canvas.delete("all")
         self.cell_pixels.clear()
+        
+        self.grid_size = 100 # 👈 10,000 celdas
+        self.painted_cells = set() # 👈 Historial de celdas pintadas para no sobrecargar el canvas
         
         cell_w = 400 / self.grid_size
         cell_h = 400 / self.grid_size
@@ -130,7 +139,7 @@ class SabuesoTab(ttk.Frame):
                 y1 = gy * cell_h
                 x2 = x1 + cell_w
                 y2 = y1 + cell_h
-                rect = self.canvas.create_rectangle(x1, y1, x2, y2, fill="#2b2b2b", outline="#1e1e1e")
+                rect = self.canvas.create_rectangle(x1, y1, x2, y2, fill="#2b2b2b", outline="")
                 self.cell_pixels[(gx, gy)] = rect
 
     def start_jauria(self):
@@ -188,12 +197,14 @@ class SabuesoTab(ttk.Frame):
             r = requests.post(url, timeout=5)
             if r.status_code == 200:
                 self._init_radar_grid()  # Limpiar radar
+                self.painted_cells.clear()
                 self.progress_bar["value"] = 0
                 self.lbl_progress.config(text="Progreso: 0% (0 / 1,000,000 px)")
                 # Limpiar tabla de hallazgos
                 for item in self.tree.get_children():
                     self.tree.delete(item)
                 self.item_links.clear()
+                self.seen_findings.clear()
                 messagebox.showinfo("Éxito", "Avance reseteado. Puedes presionar 'SOLTAR JAURÍA' para iniciar de nuevo.")
             else:
                 messagebox.showerror("Error", f"No se pudo resetear: {r.text}")
@@ -201,17 +212,26 @@ class SabuesoTab(ttk.Frame):
             messagebox.showerror("Error de conexión", str(e))
 
     def poll_status(self):
-        url = f"{self.get_server_url()}/sabueso/status"
         try:
-            r = requests.get(url, timeout=3)
-            if r.status_code == 200:
-                data = r.json()
-                self.update_ui(data)
-        except Exception as ex:
-            # Imprimir en consola si la red falla sin congelar la app
-            print(f"Error de conexión con el servidor Sabueso: {ex}")
+            # 1. Pedir estado
+            url_status = f"{self.get_server_url()}/sabueso/status"
+            r_status = requests.get(url_status, timeout=2)
+            if r_status.status_code == 200:
+                self.update_ui(r_status.json())
 
-        # SIEMPRE programar la siguiente consulta, incluso si hubo un error
+            # 2. Pedir logs vivos
+            url_logs = f"{self.get_server_url()}/sabueso/logs"
+            r_logs = requests.get(url_logs, timeout=2)
+            if r_logs.status_code == 200:
+                logs = r_logs.json().get("logs", [])
+                if logs:
+                    self.txt_logs.delete(1.0, tk.END)
+                    for line in logs:
+                        self.txt_logs.insert(tk.END, line)
+                    self.txt_logs.see(tk.END) # Auto-scroll
+        except Exception as ex:
+            pass
+
         self.after(1500, self.poll_status)
 
     def update_ui(self, data):
@@ -246,38 +266,41 @@ class SabuesoTab(ttk.Frame):
                 self.btn_start.config(state=tk.NORMAL)
                 self.btn_stop.config(state=tk.DISABLED)
 
-            # 1. Actualizar barra de progreso
+            # 1. Actualizar barra de progreso (Ahora mide Lotes)
             percentage = data.get("progress_percentage", 0)
             scanned = data.get("scanned_count", 0)
-            total = data.get("total_count", 1000000)
+            total = data.get("total_count", 10000)
 
             self.progress_bar["value"] = percentage
-            self.lbl_progress.config(text=f"Progreso: {percentage}% ({scanned:,} / {total:,} px)")
+            self.lbl_progress.config(text=f"Progreso: {percentage}% ({scanned:,} / {total:,} Lotes Completados)")
 
-            # 2. Actualizar celdas verdes en el Radar
-            visited_sample = data.get("visited_sample", [])
-            for x, y in visited_sample:
-                gx = int(x / 1000 * self.grid_size)
-                gy = int(y / 1000 * self.grid_size)
-                rect_id = self.cell_pixels.get((gx, gy))
-                if rect_id:
-                    self.canvas.itemconfig(rect_id, fill="#00e676")
+            # 2. Pintar Celdas Verdes (Lotes Completados)
+            completed_batches = data.get("completed_batches", [])
+            for gx, gy in completed_batches:
+                if (gx, gy) not in self.painted_cells:
+                    rect_id = self.cell_pixels.get((gx, gy))
+                    if rect_id:
+                        self.canvas.itemconfig(rect_id, fill="#00e676")
+                    self.painted_cells.add((gx, gy))
 
-            # 3. Actualizar Hallazgos
+            # 3. Pintar Celdas Rojas (Hallazgos - Sobrescribe al verde)
             findings = data.get("findings", [])
             for f in findings:
-                fx, fy = f["x"], f["y"]
-                gx = int(fx / 1000 * self.grid_size)
-                gy = int(fy / 1000 * self.grid_size)
+                # Calcular a qué lote pertenece el píxel exacto
+                gx = int(f["x"] / 10)
+                gy = int(f["y"] / 10)
+                
                 rect_id = self.cell_pixels.get((gx, gy))
                 if rect_id:
                     self.canvas.itemconfig(rect_id, fill="#ff1744")
 
                 link = f["link"]
-                item_id = f"{f['timestamp']}_{fx}_{fy}"
-                if item_id not in self.item_links:
-                    row_id = self.tree.insert("", "end", values=(f["timestamp"], f["user_name"], f"({fx},{fy})", f"#{f['hound_id']}"))
+                item_id = f"{f['timestamp']}_{f['x']}_{f['y']}"
+                
+                if item_id not in self.seen_findings:
+                    row_id = self.tree.insert("", "end", values=(f["timestamp"], f["user_name"], f"({f['x']},{f['y']})", f"#{f['hound_id']}"))
                     self.item_links[row_id] = link
+                    self.seen_findings.add(item_id)
 
         except Exception as err:
             print(f"Error procesando update_ui: {err}")

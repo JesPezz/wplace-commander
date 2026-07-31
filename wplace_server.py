@@ -1,4 +1,5 @@
 import zipfile, os, json, time, threading, requests, psutil
+from collections import deque
 from flask import Flask, request, jsonify, send_file
 from task_manager import TaskManager
 from sabueso_worker import jauria
@@ -220,10 +221,16 @@ def sabueso_reset():
         if os.path.exists(state_file):
             os.remove(state_file)
         
-        jauria.pending_pixels = jauria._load_or_init_progress()
-        jauria.scanned_count = 0
+        # Limpiar memoria de la Jauría
+        jauria.pending_batches = jauria._load_or_init_progress()
+        jauria.completed_batches = []  # 👈 ESTO FALTABA PARA LIMPIAR EL RADAR
         jauria.findings = []
         jauria.visited_sample = []
+        
+        # Limpiar el archivo de logs físico
+        with open("sabueso.log", "w", encoding="utf-8") as f:
+            f.write("=== HISTORIAL LIMPIADO ===\n")
+
         return jsonify({"status": "ok", "msg": "Progreso reseteado correctamente."})
     except Exception as e:
         return jsonify({"status": "error", "msg": str(e)}), 500
@@ -239,6 +246,23 @@ def sabueso_status():
         return jsonify(status)
     except Exception as e:
         return jsonify({"running": False, "error": str(e)}), 200
+
+        from collections import deque
+
+@app.route('/sabueso/logs', methods=['GET'])
+def sabueso_logs():
+    try:
+        log_path = "sabueso.log"
+        if not os.path.exists(log_path):
+            return jsonify({"logs": []})
+        
+        # Lee las últimas 15 líneas súper rápido sin cargar todo el archivo a RAM
+        with open(log_path, "r", encoding="utf-8") as f:
+            tail = list(deque(f, maxlen=15))
+            
+        return jsonify({"logs": tail})
+    except Exception as e:
+        return jsonify({"logs": [f"Error leyendo logs: {str(e)}"]})
         
 # ==========================================
 # 4. HILO VIGILANTE Y ARRANQUE
