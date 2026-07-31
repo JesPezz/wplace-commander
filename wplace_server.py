@@ -178,38 +178,68 @@ def get_plan_status():
 # ==========================================
 @app.route('/sabueso/start', methods=['POST'])
 def sabueso_start():
-    data = request.json or {}
-    target_ids = data.get('target_ids', [])
-    tile_x = data.get('tile_x', 0)
-    tile_y = data.get('tile_y', 0)
-    xmin = data.get('xmin', 0)
-    xmax = data.get('xmax', 999)
-    ymin = data.get('ymin', 0)
-    ymax = data.get('ymax', 999)
-    num_hounds = data.get('num_hounds', 8)
+    try:
+        data = request.json or {}
+        target_ids = data.get('target_ids', [])
+        tile_x = data.get('tile_x', 460)
+        tile_y = data.get('tile_y', 874)
+        xmin = data.get('xmin', 0)
+        xmax = data.get('xmax', 999)
+        ymin = data.get('ymin', 0)
+        ymax = data.get('ymax', 999)
+        num_hounds = data.get('num_hounds', 8)
 
-    if not target_ids:
-        return jsonify({"status": "error", "msg": "Lista target_ids requerida"}), 400
+        if not target_ids:
+            return jsonify({"status": "error", "msg": "Lista target_ids requerida"}), 400
 
-    jauria.start(
-        target_ids=target_ids,
-        tile_x=tile_x,
-        tile_y=tile_y,
-        xmin=xmin, xmax=xmax,
-        ymin=ymin, ymax=ymax,
-        num_hounds=num_hounds
-    )
-    return jsonify({"status": "ok", "msg": f"Jauría con {num_hounds} sabuesos iniciada."})
+        # Iniciar en un hilo secundario para responder rápido a HTTP
+        threading.Thread(
+            target=jauria.start,
+            args=(target_ids, tile_x, tile_y, xmin, xmax, ymin, ymax, num_hounds),
+            daemon=True
+        ).start()
+
+        return jsonify({"status": "ok", "msg": "Jauría iniciada correctamente."})
+    except Exception as e:
+        return jsonify({"status": "error", "msg": str(e)}), 500
 
 @app.route('/sabueso/stop', methods=['POST'])
 def sabueso_stop():
-    jauria.stop()
-    return jsonify({"status": "ok", "msg": "Jauría detenida."})
+    try:
+        # Enviar orden de detención sin bloquear la petición Flask
+        threading.Thread(target=jauria.stop, daemon=True).start()
+        return jsonify({"status": "ok", "msg": "Orden de detención enviada."})
+    except Exception as e:
+        return jsonify({"status": "error", "msg": str(e)}), 500
+
+@app.route('/sabueso/reset', methods=['POST'])
+def sabueso_reset():
+    try:
+        jauria.stop()
+        state_file = f"progress_tile_{jauria.tile_x}_{jauria.tile_y}.json"
+        if os.path.exists(state_file):
+            os.remove(state_file)
+        
+        jauria.pending_pixels = jauria._load_or_init_progress()
+        jauria.scanned_count = 0
+        jauria.findings = []
+        jauria.visited_sample = []
+        return jsonify({"status": "ok", "msg": "Progreso reseteado correctamente."})
+    except Exception as e:
+        return jsonify({"status": "error", "msg": str(e)}), 500
 
 @app.route('/sabueso/status', methods=['GET'])
 def sabueso_status():
-    return jsonify(jauria.get_status())
-
+    try:
+        status = jauria.get_status()
+        status["target_ids"] = getattr(jauria, "target_ids", []) or []
+        status["tile_x"] = getattr(jauria, "tile_x", 460)
+        status["tile_y"] = getattr(jauria, "tile_y", 874)
+        status["num_hounds"] = getattr(jauria, "num_hounds", 8)
+        return jsonify(status)
+    except Exception as e:
+        return jsonify({"running": False, "error": str(e)}), 200
+        
 # ==========================================
 # 4. HILO VIGILANTE Y ARRANQUE
 # ==========================================

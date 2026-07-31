@@ -31,8 +31,13 @@ class SabuesoTab(ttk.Frame):
         self.grid_size = 50 # Matrix 50x50 para representar el Chunk
         self.cell_pixels = {} # Guardar IDs de rectángulos del Canvas
         self.is_monitoring = False
+        self.config_loaded = False # 👈 Bandera para sincronizar la primera vez
         
         self._build_ui()
+        
+        # Iniciar monitoreo automático desde el arranque de la app
+        self.is_monitoring = True
+        self.poll_status()
 
     def _build_ui(self):
         # --- PANEL IZQUIERDO: CONFIGURACIÓN Y CONTROLES ---
@@ -41,7 +46,6 @@ class SabuesoTab(ttk.Frame):
 
         ttk.Label(left_panel, text="IDs Objetivo (separados por coma/espacio):").pack(anchor=tk.W, pady=2)
         self.txt_targets = ttk.Entry(left_panel, width=30)
-        self.txt_targets.insert(0, "12893758, 98765432")
         self.txt_targets.pack(fill=tk.X, pady=2)
 
         coords_frame = ttk.Frame(left_panel)
@@ -49,17 +53,14 @@ class SabuesoTab(ttk.Frame):
 
         ttk.Label(coords_frame, text="Tile X:").grid(row=0, column=0, sticky=tk.W)
         self.ent_tile_x = ttk.Entry(coords_frame, width=8)
-        self.ent_tile_x.insert(0, "460")
         self.ent_tile_x.grid(row=0, column=1, padx=2)
 
         ttk.Label(coords_frame, text="Tile Y:").grid(row=0, column=2, sticky=tk.W)
         self.ent_tile_y = ttk.Entry(coords_frame, width=8)
-        self.ent_tile_y.insert(0, "874")
         self.ent_tile_y.grid(row=0, column=3, padx=2)
 
         ttk.Label(left_panel, text="Cantidad de Sabuesos (Jauría):").pack(anchor=tk.W, pady=(10, 2))
         self.spn_hounds = ttk.Spinbox(left_panel, from_=1, to=16, width=5)
-        self.spn_hounds.set(8)
         self.spn_hounds.pack(anchor=tk.W, pady=2)
 
         # Botones de Acción
@@ -72,16 +73,18 @@ class SabuesoTab(ttk.Frame):
         self.btn_stop = ttk.Button(btn_frame, text="🛑 DETENER JAURÍA", command=self.stop_jauria, state=tk.DISABLED)
         self.btn_stop.pack(fill=tk.X, pady=2)
 
+        # 🆕 BOTÓN DE RESETEO
+        self.btn_reset = ttk.Button(btn_frame, text="🔄 REINICIAR PROGRESO (DESDE 0%)", command=self.reset_jauria)
+        self.btn_reset.pack(fill=tk.X, pady=(10, 2))
+
         # --- PANEL CENTRAL: VISOR GRAFICO RADAR (CANVAS) ---
         center_panel = ttk.LabelFrame(self, text=" 🗺️ Radar del Chunk (1000x1000) ", padding=10)
         center_panel.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=5, pady=5)
 
-        # Canvas para dibujar el Grid de 50x50
         self.canvas = tk.Canvas(center_panel, width=400, height=400, bg="#1e1e1e", highlightthickness=0)
         self.canvas.pack(anchor=tk.CENTER, expand=True, pady=5)
         self._init_radar_grid()
 
-        # Progreso general
         prog_frame = ttk.Frame(center_panel)
         prog_frame.pack(fill=tk.X, pady=5)
 
@@ -95,7 +98,6 @@ class SabuesoTab(ttk.Frame):
         right_panel = ttk.LabelFrame(self, text=" 🎯 Hallazgos en Vivo ", padding=10)
         right_panel.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=5, pady=5)
 
-        # Tabla de Hallazgos
         columns = ("time", "user", "coords", "hound")
         self.tree = ttk.Treeview(right_panel, columns=columns, show="headings", height=12)
         self.tree.heading("time", text="Hora")
@@ -109,7 +111,6 @@ class SabuesoTab(ttk.Frame):
         self.tree.column("hound", width=60)
         self.tree.pack(fill=tk.BOTH, expand=True, pady=5)
 
-        # Guardar links mapeados por ítem de la tabla
         self.item_links = {}
 
         btn_copy = ttk.Button(right_panel, text="📋 Copiar Link Seleccionado", command=self.copy_selected_link)
@@ -134,7 +135,6 @@ class SabuesoTab(ttk.Frame):
 
     def start_jauria(self):
         try:
-            # Limpiar e identificar IDs por comas, espacios o saltos de línea
             raw_text = self.txt_targets.get().replace("\n", ",").replace(" ", ",")
             targets = [int(i.strip()) for i in raw_text.split(",") if i.strip().isdigit()]
             
@@ -162,11 +162,9 @@ class SabuesoTab(ttk.Frame):
         try:
             r = requests.post(url, json=payload, timeout=5)
             if r.status_code == 200:
-                self._init_radar_grid()
                 self.btn_start.config(state=tk.DISABLED)
                 self.btn_stop.config(state=tk.NORMAL)
                 self.is_monitoring = True
-                self.poll_status()
             else:
                 messagebox.showerror("Error", f"Error al iniciar Jauría: {r.text}")
         except Exception as e:
@@ -178,65 +176,111 @@ class SabuesoTab(ttk.Frame):
             requests.post(url, timeout=5)
         except:
             pass
-        self.is_monitoring = False
         self.btn_start.config(state=tk.NORMAL)
         self.btn_stop.config(state=tk.DISABLED)
 
-    def poll_status(self):
-        if not self.is_monitoring:
+    def reset_jauria(self):
+        if not messagebox.askyesno("Confirmar Reseteo", "¿Estás seguro de borrar el avance de este Tile?\nSe iniciará el rastreo desde 0% (1,000,000 px)."):
             return
 
+        url = f"{self.get_server_url()}/sabueso/reset"
+        try:
+            r = requests.post(url, timeout=5)
+            if r.status_code == 200:
+                self._init_radar_grid()  # Limpiar radar
+                self.progress_bar["value"] = 0
+                self.lbl_progress.config(text="Progreso: 0% (0 / 1,000,000 px)")
+                # Limpiar tabla de hallazgos
+                for item in self.tree.get_children():
+                    self.tree.delete(item)
+                self.item_links.clear()
+                messagebox.showinfo("Éxito", "Avance reseteado. Puedes presionar 'SOLTAR JAURÍA' para iniciar de nuevo.")
+            else:
+                messagebox.showerror("Error", f"No se pudo resetear: {r.text}")
+        except Exception as e:
+            messagebox.showerror("Error de conexión", str(e))
+
+    def poll_status(self):
         url = f"{self.get_server_url()}/sabueso/status"
         try:
             r = requests.get(url, timeout=3)
             if r.status_code == 200:
                 data = r.json()
                 self.update_ui(data)
-        except Exception:
-            pass
+        except Exception as ex:
+            # Imprimir en consola si la red falla sin congelar la app
+            print(f"Error de conexión con el servidor Sabueso: {ex}")
 
-        # Consultar estado cada 1.5 segundos
+        # SIEMPRE programar la siguiente consulta, incluso si hubo un error
         self.after(1500, self.poll_status)
 
     def update_ui(self, data):
-        # 1. Actualizar barra de progreso
-        percentage = data.get("progress_percentage", 0)
-        scanned = data.get("scanned_count", 0)
-        total = data.get("total_count", 1000000)
+        try:
+            # 0. Sincronización inicial la primera vez que se reciben datos
+            if not self.config_loaded and isinstance(data, dict):
+                target_ids = data.get("target_ids") or []
+                tile_x = data.get("tile_x", 460)
+                tile_y = data.get("tile_y", 874)
+                num_hounds = data.get("num_hounds", 8)
 
-        self.progress_bar["value"] = percentage
-        self.lbl_progress.config(text=f"Progreso: {percentage}% ({scanned:,} / {total:,} px)")
+                # Rellenar cajas de texto
+                ids_str = ", ".join(str(i) for i in target_ids)
+                self.txt_targets.delete(0, tk.END)
+                self.txt_targets.insert(0, ids_str)
 
-        # 2. Actualizar celdas verdes en el Radar (Visualización de lotes)
-        visited_sample = data.get("visited_sample", [])
-        for x, y in visited_sample:
-            gx = int(x / 1000 * self.grid_size)
-            gy = int(y / 1000 * self.grid_size)
-            rect_id = self.cell_pixels.get((gx, gy))
-            if rect_id:
-                # Pintar celda explorada de verde neón
-                self.canvas.itemconfig(rect_id, fill="#00e676")
+                self.ent_tile_x.delete(0, tk.END)
+                self.ent_tile_x.insert(0, str(tile_x))
 
-        # 3. Actualizar Hallazgos y puntos rojos en el Radar
-        findings = data.get("findings", [])
-        for f in findings:
-            fx, fy = f["x"], f["y"]
-            gx = int(fx / 1000 * self.grid_size)
-            gy = int(fy / 1000 * self.grid_size)
-            rect_id = self.cell_pixels.get((gx, gy))
-            if rect_id:
-                # Pintar punto rojo objetivo
-                self.canvas.itemconfig(rect_id, fill="#ff1744")
+                self.ent_tile_y.delete(0, tk.END)
+                self.ent_tile_y.insert(0, str(tile_y))
 
-            # Insertar en tabla si no existe
-            link = f["link"]
-            item_id = f"{f['timestamp']}_{fx}_{fy}"
-            if item_id not in self.item_links:
-                row_id = self.tree.insert("", "end", values=(f["timestamp"], f["user_name"], f"({fx},{fy})", f"#{f['hound_id']}"))
-                self.item_links[row_id] = link
+                self.spn_hounds.set(num_hounds)
+                self.config_loaded = True
 
-        if not data.get("running", False):
-            self.stop_jauria()
+            # Actualizar estado de los botones (Soltar / Detener)
+            is_running = data.get("running", False)
+            if is_running:
+                self.btn_start.config(state=tk.DISABLED)
+                self.btn_stop.config(state=tk.NORMAL)
+            else:
+                self.btn_start.config(state=tk.NORMAL)
+                self.btn_stop.config(state=tk.DISABLED)
+
+            # 1. Actualizar barra de progreso
+            percentage = data.get("progress_percentage", 0)
+            scanned = data.get("scanned_count", 0)
+            total = data.get("total_count", 1000000)
+
+            self.progress_bar["value"] = percentage
+            self.lbl_progress.config(text=f"Progreso: {percentage}% ({scanned:,} / {total:,} px)")
+
+            # 2. Actualizar celdas verdes en el Radar
+            visited_sample = data.get("visited_sample", [])
+            for x, y in visited_sample:
+                gx = int(x / 1000 * self.grid_size)
+                gy = int(y / 1000 * self.grid_size)
+                rect_id = self.cell_pixels.get((gx, gy))
+                if rect_id:
+                    self.canvas.itemconfig(rect_id, fill="#00e676")
+
+            # 3. Actualizar Hallazgos
+            findings = data.get("findings", [])
+            for f in findings:
+                fx, fy = f["x"], f["y"]
+                gx = int(fx / 1000 * self.grid_size)
+                gy = int(fy / 1000 * self.grid_size)
+                rect_id = self.cell_pixels.get((gx, gy))
+                if rect_id:
+                    self.canvas.itemconfig(rect_id, fill="#ff1744")
+
+                link = f["link"]
+                item_id = f"{f['timestamp']}_{fx}_{fy}"
+                if item_id not in self.item_links:
+                    row_id = self.tree.insert("", "end", values=(f["timestamp"], f["user_name"], f"({fx},{fy})", f"#{f['hound_id']}"))
+                    self.item_links[row_id] = link
+
+        except Exception as err:
+            print(f"Error procesando update_ui: {err}")
 
     def copy_selected_link(self):
         selected = self.tree.selection()
