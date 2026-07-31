@@ -3,44 +3,33 @@ import time
 import random
 import requests
 import math
-import os
 import json
+import os
+import socket
+from datetime import datetime
 
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Accept": "application/json"
-}
+LOG_FILE = "sabueso.log"
+PROXIES_FILE = "proxies.txt"
 
-STATE_FILE = "sabueso_state.json"
+def get_public_ip():
+    """Obtiene la IP pública actual del sistema si no usa proxy."""
+    try:
+        r = requests.get("https://api.ipify.org?format=json", timeout=3)
+        return r.json().get("ip", "IP-Local")
+    except:
+        return "IP-Desconocida"
 
-# =========================================================
-# 🌐 CONFIGURACIÓN DE TU POOL DE PROXIES RESIDENCIALES
-# =========================================================
-PROXY_CONFIG_FILE = "proxy_config.json"
-
-def get_proxy_config():
-    """Carga credenciales desde un archivo local fuera de Git."""
-    if os.path.exists(PROXY_CONFIG_FILE):
-        try:
-            with open(PROXY_CONFIG_FILE, "r") as f:
-                cfg = json.load(f)
-                if cfg.get("enabled", False):
-                    user = cfg.get("user", "")
-                    password = cfg.get("pass", "")
-                    host = cfg.get("host", "")
-                    port = cfg.get("port", "")
-                    proxy_url = f"http://{user}:{password}@{host}:{port}"
-                    return {
-                        "http": proxy_url,
-                        "https": proxy_url
-                    }
-        except Exception as e:
-            print(f"[Sabueso Proxy Error]: No se pudo cargar el archivo de proxies: {e}")
-    return None
-
-# Carga dinámica al iniciar o ejecutar la tarea
-PROXIES_CONFIG = get_proxy_config()
-
+def log_event(message):
+    """Escribe en pantalla (stdout) y en el archivo sabueso.log con marca de tiempo."""
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    formatted_msg = f"[{timestamp}] {message}"
+    print(formatted_msg, flush=True)
+    
+    try:
+        with open(LOG_FILE, "a", encoding="utf-8") as f:
+            f.write(formatted_msg + "\n")
+    except Exception as e:
+        print(f"Error escribiendo en log: {e}", flush=True)
 
 def pixel_a_url(tile_x, tile_y, x, y, zoom=15.0):
     gx = (tile_x * 1000) + x
@@ -53,184 +42,232 @@ def pixel_a_url(tile_x, tile_y, x, y, zoom=15.0):
 
     return f"https://wplace.live/?lat={lat:.15f}&lng={lng:.15f}&zoom={zoom:.2f}"
 
-class SabuesoWorker:
+class JauriaSabuesos:
     def __init__(self):
         self.running = False
-        self.thread = None
-        self.state = {
-            "status": "idle",
-            "progress": "En espera de objetivos...",
-            "findings": [],
-            "scanned_count": 0,
-            "total_count": 0
-        }
-        self.load_state()
+        self.target_ids = []
+        self.tile_x = 0
+        self.tile_y = 0
+        self.xmin = 0
+        self.xmax = 999
+        self.ymin = 0
+        self.ymax = 999
+        self.num_hounds = 8
+        
+        self.scanned_count = 0
+        self.total_count = 0
+        self.findings = []
+        self.visited_sample = []
+        
+        self.lock = threading.Lock()
+        self.pending_pixels = []
+        self.threads = []
+        self.proxies_list = []
+        self.local_ip = "Cargando IP..."
 
-    def send_telegram(self, tg_token, tg_chat, msg):
-        if not tg_token or not tg_chat:
-            return
-        try:
-            url = f"https://api.telegram.org/bot{tg_token}/sendMessage"
-            requests.post(url, json={"chat_id": tg_chat, "text": msg, "parse_mode": "Markdown"}, timeout=10)
-        except Exception as e:
-            print(f"[Sabueso TG Error]: {e}")
-
-    def save_state(self, visited_set, config):
-        try:
-            data = {
-                "config": config,
-                "visited": list(visited_set),
-                "findings": self.state["findings"],
-                "status": self.state["status"]
-            }
-            with open(STATE_FILE, "w") as f:
-                json.dump(data, f)
-        except Exception as e:
-            print(f"[Sabueso Save Error]: {e}")
-
-    def load_state(self):
-        if os.path.exists(STATE_FILE):
+    def load_proxies(self):
+        self.proxies_list = []
+        if os.path.exists(PROXIES_FILE):
             try:
-                with open(STATE_FILE, "r") as f:
-                    data = json.load(f)
-                    self.state["status"] = data.get("status", "idle")
-                    self.state["findings"] = data.get("findings", [])
-            except:
-                pass
-
-    def start(self, target_ids, tile_x, tile_y, x_min=0, x_max=999, y_min=0, y_max=999, continuous=True, tg_token=None, tg_chat=None):
-        if self.running:
-            return False
-
-        # Convertir a lista de strings
-        if isinstance(target_ids, (int, str)):
-            target_ids = [str(target_ids)]
+                with open(PROXIES_FILE, "r") as f:
+                    for line in f:
+                        p = line.strip()
+                        if p and not p.startswith("#"):
+                            self.proxies_list.append(p)
+                log_event(f"🌐 [PROXIES] Cargados {len(self.proxies_list)} proxies desde {PROXIES_FILE}.")
+            except Exception as e:
+                log_event(f"⚠️ [PROXIES] Error al cargar {PROXIES_FILE}: {e}")
         else:
-            target_ids = [str(i).strip() for i in target_ids]
+            log_event("🌐 [PROXIES] No se detectó proxies.txt. Se usará conexión directa de la Pi.")
 
+    def send_telegram(self, uname, uid, x, y, url_mapa):
+        if os.path.exists("plan_state.json"):
+            try:
+                with open("plan_state.json", "r") as f:
+                    p = json.load(f)
+                token = p.get("token")
+                chat_id = p.get("chat_id")
+                if token and chat_id:
+                    msg = (
+                        f"🎯 *¡HALLAZGO DE JAURÍA!*\n\n"
+                        f"👤 *Usuario:* `{uname}`\n"
+                        f"🆔 *ID:* `{uid}`\n"
+                        f"📍 *Ubicación:* Tile ({self.tile_x}, {self.tile_y}) -> X={x}, Y={y}\n\n"
+                        f"🌐 *Link directo al mapa:*\n{url_mapa}"
+                    )
+                    url_tg = f"https://api.telegram.org/bot{token}/sendMessage"
+                    requests.post(url_tg, json={"chat_id": chat_id, "text": msg, "parse_mode": "Markdown"}, timeout=5)
+            except Exception as ex:
+                log_event(f"⚠️ Error enviando Telegram: {ex}")
+
+    def start(self, target_ids, tile_x, tile_y, xmin=0, xmax=999, ymin=0, ymax=999, num_hounds=8):
+        if self.running:
+            self.stop()
+
+        # Limpiar log anterior para la nueva prueba
+        with open(LOG_FILE, "w", encoding="utf-8") as f:
+            f.write("=== NUEVA SESIÓN DE PRUEBA DE JAURÍA ===\n")
+
+        self.target_ids = [int(i) for i in target_ids]
+        self.tile_x = tile_x
+        self.tile_y = tile_y
+        self.xmin = xmin
+        self.xmax = xmax
+        self.ymin = ymin
+        self.ymax = ymax
+        self.num_hounds = num_hounds
+        
+        self.scanned_count = 0
+        self.findings = []
+        self.visited_sample = []
+        self.local_ip = get_public_ip()
+        self.load_proxies()
+        
+        coords = [(x, y) for x in range(self.xmin, self.xmax + 1)
+                        for y in range(self.ymin, self.ymax + 1)]
+        
+        random.shuffle(coords)
+        self.pending_pixels = coords
+        self.total_count = len(coords)
         self.running = True
-        config = {
-            "target_ids": target_ids,
-            "tile_x": tile_x,
-            "tile_y": tile_y,
-            "x_min": x_min, "x_max": x_max,
-            "y_min": y_min, "y_max": y_max,
-            "continuous": continuous,
-            "tg_token": tg_token,
-            "tg_chat": tg_chat
-        }
 
-        self.state["status"] = "searching"
-        self.state["progress"] = f"Iniciando rastreo de {len(target_ids)} objetivo(s)..."
+        log_event(f"🚀 [SISTEMA] Soltando Jauría con {self.num_hounds} Sabuesos.")
+        log_event(f"🎯 [SISTEMA] Objetivos a rastrear: {self.target_ids}")
+        log_event(f"📍 [SISTEMA] Coordenadas: Tile ({self.tile_x},{self.tile_y}) | Rango X:[{xmin}-{xmax}], Y:[{ymin}-{ymax}] | Total: {self.total_count:,} px")
 
-        self.thread = threading.Thread(target=self._search_loop, args=(config,), daemon=True)
-        self.thread.start()
-        return True
+        self.threads = []
+        for i in range(self.num_hounds):
+            t = threading.Thread(target=self._hound_worker, args=(i + 1,), daemon=True)
+            t.start()
+            self.threads.append(t)
 
     def stop(self):
         self.running = False
-        if self.state["status"] == "searching":
-            self.state["status"] = "stopped"
-            self.state["progress"] = "Rastreo pausado por el usuario."
+        log_event("🛑 [SISTEMA] Orden de detención enviada a la Jauría.")
 
-    def get_status(self):
-        return self.state
-
-    def _search_loop(self, config):
-        visited = set()
-        if os.path.exists(STATE_FILE):
-            try:
-                with open(STATE_FILE, "r") as f:
-                    saved_data = json.load(f)
-                    if saved_data.get("config", {}).get("tile_x") == config["tile_x"] and \
-                       saved_data.get("config", {}).get("tile_y") == config["tile_y"]:
-                        visited = set(tuple(p) for p in saved_data.get("visited", []))
-            except:
-                pass
-
-        all_points = [(x, y) for x in range(config["x_min"], config["x_max"] + 1)
-                            for y in range(config["y_min"], config["y_max"] + 1)]
+    def _hound_worker(self, hound_id):
+        session = requests.Session()
+        session.headers.update({
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'application/json'
+        })
         
-        self.state["total_count"] = len(all_points)
+        # Asignación de IP / Proxy
+        proxy_dict = None
+        current_ip = self.local_ip
+        if self.proxies_list:
+            proxy_url = random.choice(self.proxies_list)
+            proxy_dict = {"http": proxy_url, "https": proxy_url}
+            current_ip = proxy_url
+
+        log_event(f"🐺 [Sabueso #{hound_id}] Inicializado. Usando IP/Proxy: {current_ip}")
+        
+        batches_processed = 0
 
         while self.running:
-            pending = [p for p in all_points if p not in visited]
-            self.state["scanned_count"] = len(visited)
+            batch = []
+            with self.lock:
+                if not self.pending_pixels:
+                    log_event(f"🏁 [Sabueso #{hound_id}] Sin más píxeles pendientes. Finalizando tarea.")
+                    break
+                batch_size = min(150, len(self.pending_pixels))
+                for _ in range(batch_size):
+                    batch.append(self.pending_pixels.pop())
 
-            if not pending:
-                self.state["status"] = "completed"
-                self.state["progress"] = f"✅ Área totalmente explorada ({len(visited)} px). Encontrados: {len(self.state['findings'])}"
-                self.running = False
+            if not batch:
                 break
 
-            # Reordenar de forma aleatoria en cada ciclo
-            random.shuffle(pending)
-            batch_size = min(random.randint(150, 250), len(pending))
-            current_batch = pending[:batch_size]
+            batches_processed += 1
+            log_event(f"📦 [Sabueso #{hound_id}] Inicia Lote #{batches_processed} ({len(batch)} px) | IP: {current_ip}")
 
-            for x, y in current_batch:
+            for x, y in batch:
                 if not self.running:
                     break
-
-                url_api = f"https://backend.wplace.live/s0/pixel/{config['tile_x']}/{config['tile_y']}?x={x}&y={y}"
-
+                    
+                url_api = f"https://backend.wplace.live/s0/pixel/{self.tile_x}/{self.tile_y}?x={x}&y={y}"
+                
                 try:
-                    # Se envían las peticiones a través de los Proxies Residenciales
-                    res = requests.get(url_api, headers=HEADERS, proxies=PROXIES_CONFIG, timeout=8)
+                    res = session.get(url_api, proxies=proxy_dict, timeout=4)
                     
                     if res.status_code == 200:
                         data = res.json()
-                        painted_by = data.get("paintedBy", {})
-                        uid = str(painted_by.get("id"))
-                        uname = painted_by.get("name", "Anónimo")
+                        painted_by = data.get("paintedBy")
+                        
+                        # Determinar estado del píxel
+                        if not painted_by or painted_by.get("id") is None:
+                            user_str = "empty"
+                            uid = None
+                        else:
+                            uname = painted_by.get("name") or "Anónimo"
+                            uid = painted_by.get("id")
+                            user_str = f"{uname} (ID: {uid})"
 
-                        visited.add((x, y))
-                        self.state["scanned_count"] = len(visited)
-                        self.state["progress"] = f"Escaneados: {len(visited)}/{len(all_points)} | Hallazgos: {len(self.state['findings'])} | Ult: ({x},{y})"
+                        with self.lock:
+                            self.scanned_count += 1
+                            if len(self.visited_sample) < 500:
+                                self.visited_sample.append([x, y])
+                            elif random.random() < 0.1:
+                                self.visited_sample[random.randint(0, 499)] = [x, y]
 
-                        # Verificar si coincide con alguno de la lista de IDs
-                        if uid in config["target_ids"]:
-                            url_mapa = pixel_a_url(config["tile_x"], config["tile_y"], x, y)
+                        # Log individual por píxel
+                        log_event(f"🔍 [Sabueso #{hound_id}][Lote #{batches_processed}] Px ({x},{y}) -> {user_str}")
+
+                        # ¡HALLAZGO!
+                        if uid and int(uid) in self.target_ids:
+                            url_mapa = pixel_a_url(self.tile_x, self.tile_y, x, y)
+                            timestamp_str = datetime.now().strftime("%H:%M:%S")
+                            
                             hallazgo = {
-                                "uname": uname,
+                                "timestamp": timestamp_str,
+                                "user_name": uname,
                                 "uid": uid,
-                                "coordenadas": f"Tile ({config['tile_x']}, {config['tile_y']}) -> X={x}, Y={y}",
-                                "url": url_mapa,
-                                "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")
+                                "x": x, "y": y,
+                                "hound_id": hound_id,
+                                "link": url_mapa
                             }
                             
-                            self.state["findings"].append(hallazgo)
-                            self.save_state(visited, config)
+                            with self.lock:
+                                self.findings.append(hallazgo)
 
-                            # Enviar alerta instantánea a Telegram
-                            msg = (
-                                f"🎯 *¡HALLAZGO DE SABUESO!* (#{len(self.state['findings'])})\n\n"
-                                f"👤 *Usuario:* `{uname}`\n"
-                                f"🆔 *ID:* `{uid}`\n"
-                                f"📍 *Coordenada:* Tile ({config['tile_x']}, {config['tile_y']}) -> X={x}, Y={y}\n\n"
-                                f"🌐 *Link directo al mapa:*\n{url_mapa}"
-                            )
-                            self.send_telegram(config.get("tg_token"), config.get("tg_chat"), msg)
-
-                            if not config.get("continuous", True):
-                                self.state["status"] = "found"
-                                self.state["progress"] = "🎯 Objetivo localizado."
-                                self.running = False
-                                return
+                            log_event(f"🎯 [Sabueso #{hound_id}] ¡HALLAZGO CONFIRMADO! Usuario {uname} (ID: {uid}) en ({x},{y}) | Map: {url_mapa}")
+                            self.send_telegram(uname, uid, x, y, url_mapa)
 
                     elif res.status_code == 429:
-                        self.state["progress"] = "⚠️ Rate limit. Pausando 15s..."
+                        log_event(f"⚠️ [Sabueso #{hound_id}] Rate Limit (429) en Px ({x},{y}). Pausa de enfriamiento de 15s...")
                         time.sleep(15)
+                        if self.proxies_list:
+                            proxy_url = random.choice(self.proxies_list)
+                            proxy_dict = {"http": proxy_url, "https": proxy_url}
+                            current_ip = proxy_url
+                            log_event(f"🔄 [Sabueso #{hound_id}] Rotando a nuevo Proxy: {current_ip}")
 
-                except Exception as e:
-                    pass
+                except requests.exceptions.ProxyError as ex:
+                    log_event(f"⚠️ [Sabueso #{hound_id}] Fallo de túnel en Proxy. Pausa breve de 1s...")
+                    time.sleep(1)
+                # Opcional: podrías recrear la sesión si el proxy sigue fallando
+                except requests.exceptions.Timeout as ex:
+                    log_event(f"⏱️ [Sabueso #{hound_id}] Timeout en Px ({x},{y}). Continuando...")
+                except Exception as ex:
+                    log_event(f"❌ [Sabueso #{hound_id}] Error inesperado en Px ({x},{y}): {ex}")
 
-                # Pausa humana leve por píxel (gracias a los proxies residenciales no necesitamos pausas largas)
-                time.sleep(random.uniform(0.3, 0.7))
-
-            self.save_state(visited, config)
+                # Pausa ligera entre píxeles
+                time.sleep(random.uniform(0.08, 0.18))
 
             if self.running:
-                # Con proxies residenciales, el tiempo de reposo se reduce a solo 10 a 30 segundos entre lotes
-                self.state["progress"] = f"🔄 Lote completado. Rotando proxy/IP... Hallazgos: {len(self.state['findings'])}"
-                time.sleep(random.randint(10, 30))
+                sleep_time = round(random.uniform(2.5, 6.0), 2)
+                log_event(f"💤 [Sabueso #{hound_id}] Lote #{batches_processed} finalizado. Entrando a reposo por {sleep_time}s...")
+                time.sleep(sleep_time)
+
+    def get_status(self):
+        with self.lock:
+            pct = round((self.scanned_count / self.total_count * 100), 2) if self.total_count > 0 else 0
+            return {
+                "running": self.running,
+                "scanned_count": self.scanned_count,
+                "total_count": self.total_count,
+                "progress_percentage": pct,
+                "findings": list(self.findings),
+                "visited_sample": list(self.visited_sample[-300:])
+            }
+
+jauria = JauriaSabuesos()

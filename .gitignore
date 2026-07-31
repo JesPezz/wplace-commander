@@ -8,6 +8,7 @@ wplace_capturas_local/
 *.zip
 *.png
 *.json
+*.txt
 
 # Archivos de estado y configuración local
 wplace_state.json

@@ -22,6 +22,235 @@ SOURCES = {
     "BPlace": "https://bplace.org/files/s0/tiles"
 }
 
+class SabuesoTab(ttk.Frame):
+    def __init__(self, parent, server_url_getter):
+        super().__init__(parent)
+        self.get_server_url = server_url_getter
+        
+        # Estado local del visor
+        self.grid_size = 50 # Matrix 50x50 para representar el Chunk
+        self.cell_pixels = {} # Guardar IDs de rectángulos del Canvas
+        self.is_monitoring = False
+        
+        self._build_ui()
+
+    def _build_ui(self):
+        # --- PANEL IZQUIERDO: CONFIGURACIÓN Y CONTROLES ---
+        left_panel = ttk.LabelFrame(self, text=" 🐺 Configuración de la Jauría ", padding=10)
+        left_panel.pack(side=tk.LEFT, fill=tk.Y, padx=5, pady=5)
+
+        ttk.Label(left_panel, text="IDs Objetivo (separados por coma/espacio):").pack(anchor=tk.W, pady=2)
+        self.txt_targets = ttk.Entry(left_panel, width=30)
+        self.txt_targets.insert(0, "12893758, 98765432")
+        self.txt_targets.pack(fill=tk.X, pady=2)
+
+        coords_frame = ttk.Frame(left_panel)
+        coords_frame.pack(fill=tk.X, pady=5)
+
+        ttk.Label(coords_frame, text="Tile X:").grid(row=0, column=0, sticky=tk.W)
+        self.ent_tile_x = ttk.Entry(coords_frame, width=8)
+        self.ent_tile_x.insert(0, "460")
+        self.ent_tile_x.grid(row=0, column=1, padx=2)
+
+        ttk.Label(coords_frame, text="Tile Y:").grid(row=0, column=2, sticky=tk.W)
+        self.ent_tile_y = ttk.Entry(coords_frame, width=8)
+        self.ent_tile_y.insert(0, "874")
+        self.ent_tile_y.grid(row=0, column=3, padx=2)
+
+        ttk.Label(left_panel, text="Cantidad de Sabuesos (Jauría):").pack(anchor=tk.W, pady=(10, 2))
+        self.spn_hounds = ttk.Spinbox(left_panel, from_=1, to=16, width=5)
+        self.spn_hounds.set(8)
+        self.spn_hounds.pack(anchor=tk.W, pady=2)
+
+        # Botones de Acción
+        btn_frame = ttk.Frame(left_panel)
+        btn_frame.pack(fill=tk.X, pady=15)
+
+        self.btn_start = ttk.Button(btn_frame, text="🐺 SOLTAR JAURÍA", command=self.start_jauria)
+        self.btn_start.pack(fill=tk.X, pady=2)
+
+        self.btn_stop = ttk.Button(btn_frame, text="🛑 DETENER JAURÍA", command=self.stop_jauria, state=tk.DISABLED)
+        self.btn_stop.pack(fill=tk.X, pady=2)
+
+        # --- PANEL CENTRAL: VISOR GRAFICO RADAR (CANVAS) ---
+        center_panel = ttk.LabelFrame(self, text=" 🗺️ Radar del Chunk (1000x1000) ", padding=10)
+        center_panel.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+        # Canvas para dibujar el Grid de 50x50
+        self.canvas = tk.Canvas(center_panel, width=400, height=400, bg="#1e1e1e", highlightthickness=0)
+        self.canvas.pack(anchor=tk.CENTER, expand=True, pady=5)
+        self._init_radar_grid()
+
+        # Progreso general
+        prog_frame = ttk.Frame(center_panel)
+        prog_frame.pack(fill=tk.X, pady=5)
+
+        self.lbl_progress = ttk.Label(prog_frame, text="Progreso: 0% (0 / 1,000,000 px)")
+        self.lbl_progress.pack(anchor=tk.W)
+
+        self.progress_bar = ttk.Progressbar(prog_frame, mode="determinate", maximum=100)
+        self.progress_bar.pack(fill=tk.X, pady=2)
+
+        # --- PANEL DERECHO: HALLAZGOS Y LINKS ---
+        right_panel = ttk.LabelFrame(self, text=" 🎯 Hallazgos en Vivo ", padding=10)
+        right_panel.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+        # Tabla de Hallazgos
+        columns = ("time", "user", "coords", "hound")
+        self.tree = ttk.Treeview(right_panel, columns=columns, show="headings", height=12)
+        self.tree.heading("time", text="Hora")
+        self.tree.heading("user", text="Usuario")
+        self.tree.heading("coords", text="Coordenada")
+        self.tree.heading("hound", text="Sabueso")
+
+        self.tree.column("time", width=60)
+        self.tree.column("user", width=100)
+        self.tree.column("coords", width=90)
+        self.tree.column("hound", width=60)
+        self.tree.pack(fill=tk.BOTH, expand=True, pady=5)
+
+        # Guardar links mapeados por ítem de la tabla
+        self.item_links = {}
+
+        btn_copy = ttk.Button(right_panel, text="📋 Copiar Link Seleccionado", command=self.copy_selected_link)
+        btn_copy.pack(fill=tk.X, pady=2)
+
+    def _init_radar_grid(self):
+        """Dibuja la cuadrícula 50x50 en gris oscuro dentro del Canvas."""
+        self.canvas.delete("all")
+        self.cell_pixels.clear()
+        
+        cell_w = 400 / self.grid_size
+        cell_h = 400 / self.grid_size
+
+        for gx in range(self.grid_size):
+            for gy in range(self.grid_size):
+                x1 = gx * cell_w
+                y1 = gy * cell_h
+                x2 = x1 + cell_w
+                y2 = y1 + cell_h
+                rect = self.canvas.create_rectangle(x1, y1, x2, y2, fill="#2b2b2b", outline="#1e1e1e")
+                self.cell_pixels[(gx, gy)] = rect
+
+    def start_jauria(self):
+        try:
+            # Limpiar e identificar IDs por comas, espacios o saltos de línea
+            raw_text = self.txt_targets.get().replace("\n", ",").replace(" ", ",")
+            targets = [int(i.strip()) for i in raw_text.split(",") if i.strip().isdigit()]
+            
+            if not targets:
+                messagebox.showerror("Error", "Debes ingresar al menos un ID numérico válido.")
+                return
+
+            tile_x = int(self.ent_tile_x.get())
+            tile_y = int(self.ent_tile_y.get())
+            hounds = int(self.spn_hounds.get())
+        except ValueError:
+            messagebox.showerror("Error", "Revisa los campos numéricos de Tile X, Tile Y o Sabuesos.")
+            return
+
+        url = f"{self.get_server_url()}/sabueso/start"
+        payload = {
+            "target_ids": targets,
+            "tile_x": tile_x,
+            "tile_y": tile_y,
+            "xmin": 0, "xmax": 999,
+            "ymin": 0, "ymax": 999,
+            "num_hounds": hounds
+        }
+
+        try:
+            r = requests.post(url, json=payload, timeout=5)
+            if r.status_code == 200:
+                self._init_radar_grid()
+                self.btn_start.config(state=tk.DISABLED)
+                self.btn_stop.config(state=tk.NORMAL)
+                self.is_monitoring = True
+                self.poll_status()
+            else:
+                messagebox.showerror("Error", f"Error al iniciar Jauría: {r.text}")
+        except Exception as e:
+            messagebox.showerror("Error de conexión", str(e))
+
+    def stop_jauria(self):
+        url = f"{self.get_server_url()}/sabueso/stop"
+        try:
+            requests.post(url, timeout=5)
+        except:
+            pass
+        self.is_monitoring = False
+        self.btn_start.config(state=tk.NORMAL)
+        self.btn_stop.config(state=tk.DISABLED)
+
+    def poll_status(self):
+        if not self.is_monitoring:
+            return
+
+        url = f"{self.get_server_url()}/sabueso/status"
+        try:
+            r = requests.get(url, timeout=3)
+            if r.status_code == 200:
+                data = r.json()
+                self.update_ui(data)
+        except Exception:
+            pass
+
+        # Consultar estado cada 1.5 segundos
+        self.after(1500, self.poll_status)
+
+    def update_ui(self, data):
+        # 1. Actualizar barra de progreso
+        percentage = data.get("progress_percentage", 0)
+        scanned = data.get("scanned_count", 0)
+        total = data.get("total_count", 1000000)
+
+        self.progress_bar["value"] = percentage
+        self.lbl_progress.config(text=f"Progreso: {percentage}% ({scanned:,} / {total:,} px)")
+
+        # 2. Actualizar celdas verdes en el Radar (Visualización de lotes)
+        visited_sample = data.get("visited_sample", [])
+        for x, y in visited_sample:
+            gx = int(x / 1000 * self.grid_size)
+            gy = int(y / 1000 * self.grid_size)
+            rect_id = self.cell_pixels.get((gx, gy))
+            if rect_id:
+                # Pintar celda explorada de verde neón
+                self.canvas.itemconfig(rect_id, fill="#00e676")
+
+        # 3. Actualizar Hallazgos y puntos rojos en el Radar
+        findings = data.get("findings", [])
+        for f in findings:
+            fx, fy = f["x"], f["y"]
+            gx = int(fx / 1000 * self.grid_size)
+            gy = int(fy / 1000 * self.grid_size)
+            rect_id = self.cell_pixels.get((gx, gy))
+            if rect_id:
+                # Pintar punto rojo objetivo
+                self.canvas.itemconfig(rect_id, fill="#ff1744")
+
+            # Insertar en tabla si no existe
+            link = f["link"]
+            item_id = f"{f['timestamp']}_{fx}_{fy}"
+            if item_id not in self.item_links:
+                row_id = self.tree.insert("", "end", values=(f["timestamp"], f["user_name"], f"({fx},{fy})", f"#{f['hound_id']}"))
+                self.item_links[row_id] = link
+
+        if not data.get("running", False):
+            self.stop_jauria()
+
+    def copy_selected_link(self):
+        selected = self.tree.selection()
+        if not selected:
+            messagebox.showinfo("Atención", "Selecciona un hallazgo de la lista.")
+            return
+        
+        row_id = selected[0]
+        link = self.item_links.get(row_id)
+        if link:
+            pyperclip.copy(link)
+            messagebox.showinfo("Copiado", f"Link copiado al portapapeles:\n{link}")
+
+
 class WPlaceClient:
     def __init__(self, root):
         self.root = root
@@ -72,7 +301,10 @@ class WPlaceClient:
         self.setup_tab_planner()
         self.setup_tab_telegram()
         self.setup_tab_system()
-        self.setup_tab_sabueso()
+        
+        # --- MONTAJE DE LA PESTAÑA MODERNA DEL SABUESO ---
+        self.sabueso_tab = SabuesoTab(self.tab_sabueso, lambda: self.server_ip.get().rstrip('/'))
+        self.sabueso_tab.pack(fill='both', expand=True)
         
         self.running = True
         threading.Thread(target=self.monitor_loop, daemon=True).start()
@@ -100,13 +332,11 @@ class WPlaceClient:
         self.guardar_config()
         messagebox.showinfo("Guardado", "Credenciales de Telegram guardadas globalmente.\nAhora aplicarán para Misiones y Planificador.")
 
-    # ================= PESTAÑA PLANIFICADOR CON DIAGNÓSTICO =================
+    # ================= PESTAÑA PLANIFICADOR =================
     def setup_tab_planner(self):
-        # Marco principal
         main_f = ttk.Frame(self.tab_planner)
         main_f.pack(fill='both', expand=True, padx=15, pady=10)
 
-        # 1. Calculadora principal
         f = ttk.LabelFrame(main_f, text="Calculadora Estratégica Híbrida")
         f.pack(fill='x', padx=5, pady=5)
         
@@ -134,7 +364,6 @@ class WPlaceClient:
         
         ttk.Button(f, text="CALCULAR Y ACTIVAR ALERTA", style="Accent.TButton", command=self.calcular_plan).pack(pady=10)
         
-        # 2. Evaluación de daño / ataque
         f_diag = ttk.LabelFrame(main_f, text="🛡️ Evaluador de Daños por Ataque")
         f_diag.pack(fill='x', padx=5, pady=5)
         
@@ -148,103 +377,8 @@ class WPlaceClient:
         
         ttk.Button(f_diag_in, text="🔍 ANALIZAR CAPACIDAD DE REPARACIÓN", style="Blue.TButton", command=self.analizar_dano).grid(row=0, column=2, padx=15, pady=5)
 
-        # 3. Resultados y Cronograma
         res_f = ttk.LabelFrame(main_f, text="Resultados y Cronograma")
         res_f.pack(fill='both', expand=True, padx=5, pady=5)
-        
-        self.lbl_plan_res = ttk.Label(res_f, text="Ingresa tus datos para generar el plan...", justify="left", font=('Segoe UI', 10))
-        self.lbl_plan_res.pack(padx=15, pady=15, anchor="w")
-        
-# ================= PESTAÑA SABUESO =================
-    def setup_tab_sabueso(self):
-        paned = tk.PanedWindow(self.tab_sabueso, orient=tk.HORIZONTAL, sashwidth=6, sashrelief=tk.RAISED, bg="#d0d0d0")
-        paned.pack(fill='both', expand=True, padx=5, pady=5)
-
-        # PANEL IZQUIERDO (Controles)
-        left = ttk.Frame(paned, width=350)
-        paned.add(left, minsize=320)
-        
-        f_params = ttk.LabelFrame(left, text="Parámetros de Rastreo")
-        f_params.pack(fill='x', padx=10, pady=10)
-        
-        ttk.Label(f_params, text="ID Usuario Objetivo:").grid(row=0, column=0, sticky='e', padx=5, pady=5)
-        self.sb_user_id = ttk.Entry(f_params, width=15)
-        self.sb_user_id.grid(row=0, column=1, sticky='w', pady=5)
-        
-        ttk.Label(f_params, text="Tile X:").grid(row=1, column=0, sticky='e', padx=5, pady=5)
-        self.sb_tile_x = ttk.Entry(f_params, width=10)
-        self.sb_tile_x.grid(row=1, column=1, sticky='w', pady=5)
-        
-        ttk.Label(f_params, text="Tile Y:").grid(row=2, column=0, sticky='e', padx=5, pady=5)
-        self.sb_tile_y = ttk.Entry(f_params, width=10)
-        self.sb_tile_y.grid(row=2, column=1, sticky='w', pady=5)
-        
-        f_rango = ttk.LabelFrame(left, text="Rango Interno (Opcional)")
-        f_rango.pack(fill='x', padx=10, pady=5)
-        
-        ttk.Label(f_rango, text="X Min/Max:").grid(row=0, column=0, padx=5, pady=5)
-        self.sb_xmin = ttk.Entry(f_rango, width=6); self.sb_xmin.insert(0, "0"); self.sb_xmin.grid(row=0, column=1)
-        self.sb_xmax = ttk.Entry(f_rango, width=6); self.sb_xmax.insert(0, "999"); self.sb_xmax.grid(row=0, column=2)
-        
-        ttk.Label(f_rango, text="Y Min/Max:").grid(row=1, column=0, padx=5, pady=5)
-        self.sb_ymin = ttk.Entry(f_rango, width=6); self.sb_ymin.insert(0, "0"); self.sb_ymin.grid(row=1, column=1)
-        self.sb_ymax = ttk.Entry(f_rango, width=6); self.sb_ymax.insert(0, "999"); self.sb_ymax.grid(row=1, column=2)
-
-        bf = ttk.Frame(left)
-        bf.pack(fill='x', padx=10, pady=20)
-        ttk.Button(bf, text="🐶 SOLTAR SABUESO", style="Accent.TButton", command=self.lanzar_sabueso).pack(fill='x', pady=2)
-        ttk.Button(bf, text="🛑 ABORTAR RASTREO", style="Danger.TButton", command=self.detener_sabueso).pack(fill='x', pady=2)
-
-        # PANEL DERECHO (Resultados en vivo)
-        right = ttk.LabelFrame(paned, text="Terminal de Rastreo")
-        paned.add(right, stretch="always")
-        
-        self.lbl_sb_status = ttk.Label(right, text="Estado: EN ESPERA", font=('Consolas', 12, 'bold'), foreground="gray")
-        self.lbl_sb_status.pack(pady=10)
-        
-        self.lbl_sb_prog = ttk.Label(right, text="Esperando instrucciones...", font=('Consolas', 10))
-        self.lbl_sb_prog.pack(pady=5)
-        
-        self.txt_sb_result = tk.Text(right, height=10, width=50, font=('Consolas', 11), bg="#1e1e1e", fg="#4CAF50")
-        self.txt_sb_result.pack(fill='both', expand=True, padx=10, pady=10)
-
-    def lanzar_sabueso(self):
-        try:
-            payload = {
-                "target_id": int(self.sb_user_id.get()),
-                "tile_x": int(self.sb_tile_x.get()),
-                "tile_y": int(self.sb_tile_y.get()),
-                "xmin": int(self.sb_xmin.get()), "xmax": int(self.sb_xmax.get()),
-                "ymin": int(self.sb_ymin.get()), "ymax": int(self.sb_ymax.get())
-            }
-            r = requests.post(f"{self.server_ip.get().rstrip('/')}/sabueso/start", json=payload, timeout=3)
-            if r.status_code == 200 and r.json().get('status') == 'ok':
-                self.txt_sb_result.delete(1.0, tk.END)
-                messagebox.showinfo("Iniciado", "El sabueso ha comenzado a buscar de forma sigilosa.")
-            else:
-                messagebox.showerror("Error", r.json().get('msg', 'Error desconocido'))
-        except Exception as e:
-            messagebox.showerror("Datos inválidos", f"Revisa los números: {e}")
-
-    def detener_sabueso(self):
-        try:
-            requests.post(f"{self.server_ip.get().rstrip('/')}/sabueso/stop", timeout=3)
-        except:
-            pass
-
-        # --- SECCIÓN DE EVALUACIÓN DE DAÑO / ATAQUE ---
-        f_diag = ttk.LabelFrame(f, text="🛡️ Evaluador de Daños por Ataque")
-        f_diag.grid(row=5, column=0, columnspan=2, sticky='ew', padx=10, pady=10)
-        
-        ttk.Label(f_diag, text="Píxeles Dañados o % de Ataque:").grid(row=0, column=0, padx=5, pady=5, sticky='e')
-        self.entry_damage = ttk.Entry(f_diag, width=15)
-        self.entry_damage.insert(0, "2000")
-        self.entry_damage.grid(row=0, column=1, padx=5, pady=5, sticky='w')
-        
-        ttk.Button(f_diag, text="🔍 ANALIZAR CAPACIDAD DE REPARACIÓN", style="Blue.TButton", command=self.analizar_dano).grid(row=0, column=2, padx=10, pady=5)
-
-        res_f = ttk.LabelFrame(f, text="Resultados y Cronograma")
-        res_f.grid(row=6, column=0, columnspan=2, sticky='ew', padx=10, pady=10)
         
         self.lbl_plan_res = ttk.Label(res_f, text="Ingresa tus datos para generar el plan...", justify="left", font=('Segoe UI', 10))
         self.lbl_plan_res.pack(padx=15, pady=15, anchor="w")
@@ -516,7 +650,6 @@ class WPlaceClient:
         self.lbl_cpu = tk.Label(f, text="CPU: --%", fg="blue", font=("Arial", 10, "bold")); self.lbl_cpu.pack(side='left', padx=20)
         self.lbl_ram = tk.Label(f, text="RAM: --%", fg="green", font=("Arial", 10, "bold")); self.lbl_ram.pack(side='left', padx=20)
         
-        # --- MENÚ CONTEXTUAL (CLIC DERECHO) ---
         self.ctx_menu = Menu(self.root, tearoff=0)
         self.ctx_menu.add_command(label="▶ Reanudar", command=lambda: self.do_act("start"))
         self.ctx_menu.add_command(label="⏸ Pausar/Detener", command=lambda: self.do_act("stop"))
@@ -530,7 +663,6 @@ class WPlaceClient:
         for c, w in zip(cols, [40, 180, 80, 120, 100, 80, 60, 80, 80]): self.tree.heading(c, text=c); self.tree.column(c, width=w, anchor="center")
         self.tree.pack(fill='both', expand=True, padx=10, pady=5); self.tree.bind("<Button-3>", lambda e: (self.tree.selection_set(self.tree.identify_row(e.y)), self.ctx_menu.post(e.x_root, e.y_root)) if self.tree.identify_row(e.y) else None)
 
-        # --- BARRA DE BOTONES INFERIOR ---
         bf = ttk.Frame(self.tab_manager); bf.pack(fill='x', padx=10, pady=10)
         ttk.Button(bf, text="▶ START", style="Green.TButton", command=lambda: self.do_act("start")).pack(side='left', padx=2)
         ttk.Button(bf, text="⏸ STOP", style="Blue.TButton", command=lambda: self.do_act("stop")).pack(side='left', padx=2)
@@ -552,7 +684,6 @@ class WPlaceClient:
 
         task_id = raw_values[0]
         
-        # Consultar información de la API
         try:
             url = f"{self.server_ip.get().rstrip('/')}/status"
             r = requests.get(url, timeout=5)
@@ -561,29 +692,23 @@ class WPlaceClient:
                 return
                 
             tasks_data = r.json().get('tasks', [])
-            
-            # Buscar la tarea comparando de forma flexible (string vs int)
             current_task = None
             for t in tasks_data:
-                # Comprobar t.get('id') o t.get('task_id') por compatibilidad
                 tid = t.get('id') if t.get('id') is not None else t.get('task_id')
                 if str(tid).strip() == str(task_id).strip():
                     current_task = t
                     break
 
             if not current_task:
-                # Si no la encuentra en /status, mostrar mensaje informativo detallado
-                messagebox.showerror("Error", f"No se encontraron los datos de la Tarea #{task_id} en el servidor.\nIDs disponibles: {[t.get('id') for t in tasks_data]}")
+                messagebox.showerror("Error", f"No se encontraron los datos de la Tarea #{task_id} en el servidor.")
                 return
 
         except Exception as e:
             messagebox.showerror("Error", f"Error de conexión al consultar tarea: {e}")
             return
 
-        # Extraer la configuración interna de la tarea
         cfg = current_task.get('config', {})
 
-        # Ventana modal de edición
         edit_win = tk.Toplevel(self.root)
         edit_win.title(f"Editar Tarea #{task_id}")
         edit_win.geometry("380x350")
@@ -593,37 +718,31 @@ class WPlaceClient:
         f = ttk.Frame(edit_win, padding=15)
         f.pack(fill='both', expand=True)
 
-        # Nombre
         ttk.Label(f, text="Nombre:").grid(row=0, column=0, sticky='w', pady=5)
         entry_name = ttk.Entry(f, width=25)
         entry_name.insert(0, cfg.get('name', current_task.get('name', '')))
         entry_name.grid(row=0, column=1, pady=5)
 
-        # Intervalo (Min)
         ttk.Label(f, text="Intervalo (Min):").grid(row=1, column=0, sticky='w', pady=5)
         entry_interval = ttk.Entry(f, width=25)
         entry_interval.insert(0, str(cfg.get('interval', 1)))
         entry_interval.grid(row=1, column=1, pady=5)
 
-        # Sensibilidad Alerta (%)
         ttk.Label(f, text="Sensibilidad Alerta (%):").grid(row=2, column=0, sticky='w', pady=5)
         entry_alert = ttk.Entry(f, width=25)
         entry_alert.insert(0, str(cfg.get('alert_pct', 5.0)))
         entry_alert.grid(row=2, column=1, pady=5)
 
-        # Límite MB
         ttk.Label(f, text="Límite MB:").grid(row=3, column=0, sticky='w', pady=5)
         entry_mb = ttk.Entry(f, width=25)
         entry_mb.insert(0, str(cfg.get('limit_mb', 1000)))
         entry_mb.grid(row=3, column=1, pady=5)
 
-        # Duración Horas
         ttk.Label(f, text="Duración (Horas, 0=Inf):").grid(row=4, column=0, sticky='w', pady=5)
         entry_dur = ttk.Entry(f, width=25)
         entry_dur.insert(0, str(cfg.get('duration_hours', 0)))
         entry_dur.grid(row=4, column=1, pady=5)
 
-        # Toggles
         var_timelapse = tk.BooleanVar(value=cfg.get('save_timelapse', True))
         var_sentry = tk.BooleanVar(value=cfg.get('sentry', True))
 
@@ -679,17 +798,15 @@ class WPlaceClient:
         try:
             r = requests.get(f"{self.server_ip.get().rstrip('/')}/status", timeout=2)
             r_plan = requests.get(f"{self.server_ip.get().rstrip('/')}/plan/status", timeout=2)
-            r_sab = requests.get(f"{self.server_ip.get().rstrip('/')}/sabueso/status", timeout=2) # NUEVO LLAMADO
             
             if r.status_code == 200:
                 d = r.json()
                 p = r_plan.json() if r_plan.status_code == 200 else {"active": False}
-                s = r_sab.json() if r_sab.status_code == 200 else None
-                self.root.after(0, lambda: self.upd_ui(d, p, s)) # PASAMOS LA 's'
+                self.root.after(0, lambda: self.upd_ui(d, p))
         except: 
             pass
 
-    def upd_ui(self, d, p, s=None): # <-- ¡AQUÍ ESTÁ EL CAMBIO CLAVE!
+    def upd_ui(self, d, p):
         sid = None; sel = self.tree.selection()
         if sel: sid = self.tree.item(sel[0])['values'][0]
         self.lbl_cpu.config(text=f"CPU: {d['system']['cpu']}%"); self.lbl_ram.config(text=f"RAM: {d['system']['ram']}%")
@@ -707,7 +824,6 @@ class WPlaceClient:
             if str(t['id']) == str(sid): self.tree.selection_set(item)
         self.tree.tag_configure('run', foreground='green'); self.tree.tag_configure('err', foreground='red')
 
-        # --- ACTUALIZAR LA PESTAÑA DEL PLANIFICADOR ---
         if hasattr(self, 'lbl_plan_res'):
             if p.get("active"):
                 config_txt = p.get('config_txt', '')
@@ -723,32 +839,6 @@ class WPlaceClient:
             else:
                 if "ALERTA ACTIVA" in self.lbl_plan_res.cget("text") or "TIEMPO CUMPLIDO" in self.lbl_plan_res.cget("text"):
                     self.lbl_plan_res.config(text="Ingresa tus datos para generar el plan...", foreground="black")
-
-        # --- FUNCIÓN PARA EL SABUESO ---
-        if s and hasattr(self, 'lbl_sb_status'):
-            # Colores según el estado
-            color = "gray"
-            if s['status'] == "searching": color = "blue"
-            elif s['status'] == "found": color = "green"
-            elif s['status'] == "not_found": color = "red"
-            
-            self.lbl_sb_status.config(text=f"Estado: {s['status'].upper()}", foreground=color)
-            self.lbl_sb_prog.config(text=s['progress'])
-            
-            # Si encontró al objetivo y el cuadro de texto está vacío, lo llenamos
-            if s['status'] == "found" and s['result']:
-                current_text = self.txt_sb_result.get(1.0, tk.END).strip()
-                if not current_text:
-                    res = s['result']
-                    info = (
-                        f"🎯 OBJETIVO ENCONTRADO\n"
-                        f"{'-'*40}\n"
-                        f"Usuario: {res['uname']} (ID: {res['uid']})\n"
-                        f"Ubicación: {res['coordenadas']}\n\n"
-                        f"🌐 LINK DIRECTO AL MAPA:\n"
-                        f"{res['url']}"
-                    )
-                    self.txt_sb_result.insert(tk.END, info)
 
     def setup_tab_system(self):
         f = ttk.LabelFrame(self.tab_system, text="Gestión Global"); f.pack(fill='both', padx=20, pady=20)

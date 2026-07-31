@@ -1,10 +1,10 @@
 import zipfile, os, json, time, threading, requests, psutil
 from flask import Flask, request, jsonify, send_file
 from task_manager import TaskManager
-from sabueso_worker import SabuesoWorker
+from sabueso_worker import jauria
 
 # Inicializamos una única instancia del Sabueso globalmente
-sabueso_engine = SabuesoWorker()
+
 
 # 1. INICIALIZAR LA APP
 app = Flask(__name__)
@@ -178,47 +178,37 @@ def get_plan_status():
 # ==========================================
 @app.route('/sabueso/start', methods=['POST'])
 def sabueso_start():
-    data = request.json
-    
-    # Acepta target_ids (lista) o target_id (individual)
-    raw_targets = data.get('target_ids') or data.get('target_id')
-    
-    tg_token = data.get('tg_token')
-    tg_chat = data.get('tg_chat')
-    
-    if not tg_token and os.path.exists("plan_state.json"):
-        try:
-            with open("plan_state.json") as f:
-                p = json.load(f)
-                tg_token = p.get("token")
-                tg_chat = p.get("chat_id")
-        except:
-            pass
+    data = request.json or {}
+    target_ids = data.get('target_ids', [])
+    tile_x = data.get('tile_x', 0)
+    tile_y = data.get('tile_y', 0)
+    xmin = data.get('xmin', 0)
+    xmax = data.get('xmax', 999)
+    ymin = data.get('ymin', 0)
+    ymax = data.get('ymax', 999)
+    num_hounds = data.get('num_hounds', 8)
 
-    success = sabueso_engine.start(
-        target_ids=raw_targets,
-        tile_x=data.get('tile_x'),
-        tile_y=data.get('tile_y'),
-        x_min=data.get('xmin', 0),
-        x_max=data.get('xmax', 999),
-        y_min=data.get('ymin', 0),
-        y_max=data.get('ymax', 999),
-        continuous=data.get('continuous', True),
-        tg_token=tg_token,
-        tg_chat=tg_chat
+    if not target_ids:
+        return jsonify({"status": "error", "msg": "Lista target_ids requerida"}), 400
+
+    jauria.start(
+        target_ids=target_ids,
+        tile_x=tile_x,
+        tile_y=tile_y,
+        xmin=xmin, xmax=xmax,
+        ymin=ymin, ymax=ymax,
+        num_hounds=num_hounds
     )
-    if success:
-        return jsonify({"status": "ok", "msg": "Sabueso pasivo liberado con soporte de Proxies."})
-    return jsonify({"status": "error", "msg": "El Sabueso ya está en marcha."})
+    return jsonify({"status": "ok", "msg": f"Jauría con {num_hounds} sabuesos iniciada."})
 
 @app.route('/sabueso/stop', methods=['POST'])
 def sabueso_stop():
-    sabueso_engine.stop()
-    return jsonify({"status": "ok"})
+    jauria.stop()
+    return jsonify({"status": "ok", "msg": "Jauría detenida."})
 
 @app.route('/sabueso/status', methods=['GET'])
 def sabueso_status():
-    return jsonify(sabueso_engine.get_status())
+    return jsonify(jauria.get_status())
 
 # ==========================================
 # 4. HILO VIGILANTE Y ARRANQUE
