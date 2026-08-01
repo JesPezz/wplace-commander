@@ -50,61 +50,66 @@ class SabuesoTab(ttk.Frame):
 
         coords_frame = ttk.Frame(left_panel)
         coords_frame.pack(fill=tk.X, pady=5)
-
         ttk.Label(coords_frame, text="Tile X:").grid(row=0, column=0, sticky=tk.W)
         self.ent_tile_x = ttk.Entry(coords_frame, width=8)
         self.ent_tile_x.grid(row=0, column=1, padx=2)
-
         ttk.Label(coords_frame, text="Tile Y:").grid(row=0, column=2, sticky=tk.W)
         self.ent_tile_y = ttk.Entry(coords_frame, width=8)
         self.ent_tile_y.grid(row=0, column=3, padx=2)
 
-        ttk.Label(left_panel, text="Cantidad de Sabuesos (Jauría):").pack(anchor=tk.W, pady=(10, 2))
+        ttk.Label(left_panel, text="Cantidad Sabuesos:").pack(anchor=tk.W, pady=(5, 0))
         self.spn_hounds = ttk.Spinbox(left_panel, from_=1, to=16, width=5)
         self.spn_hounds.pack(anchor=tk.W, pady=2)
 
+        # 🆕 PARÁMETROS TÁCTICOS
+        tactics_frame = ttk.LabelFrame(left_panel, text=" 🧠 Estrategia Forense ", padding=5)
+        tactics_frame.pack(fill=tk.X, pady=10)
+        
+        ttk.Label(tactics_frame, text="Salto Radar (px):").grid(row=0, column=0, sticky=tk.W, pady=2)
+        self.spn_step = ttk.Spinbox(tactics_frame, from_=5, to=100, increment=5, width=5)
+        self.spn_step.grid(row=0, column=1, sticky=tk.E)
+
+        ttk.Label(tactics_frame, text="Radio Amnesia (px):").grid(row=1, column=0, sticky=tk.W, pady=2)
+        self.spn_amnesia = ttk.Spinbox(tactics_frame, from_=10, to=300, increment=10, width=5)
+        self.spn_amnesia.grid(row=1, column=1, sticky=tk.E)
+
+        ttk.Label(tactics_frame, text="Dardos Enjambre:").grid(row=2, column=0, sticky=tk.W, pady=2)
+        self.spn_swarm = ttk.Spinbox(tactics_frame, from_=10, to=200, increment=10, width=5)
+        self.spn_swarm.grid(row=2, column=1, sticky=tk.E)
+
         # Botones de Acción
         btn_frame = ttk.Frame(left_panel)
-        btn_frame.pack(fill=tk.X, pady=15)
-
-        self.btn_start = ttk.Button(btn_frame, text="🐺 SOLTAR JAURÍA", command=self.start_jauria)
+        btn_frame.pack(fill=tk.X, pady=5)
+        self.btn_start = ttk.Button(btn_frame, text="🐺 SOLTAR JAURÍA TÁCTICA", command=self.start_jauria)
         self.btn_start.pack(fill=tk.X, pady=2)
-
-        self.btn_stop = ttk.Button(btn_frame, text="🛑 DETENER JAURÍA", command=self.stop_jauria, state=tk.DISABLED)
+        self.btn_stop = ttk.Button(btn_frame, text="🛑 ABORTAR MISIÓN", command=self.stop_jauria, state=tk.DISABLED)
         self.btn_stop.pack(fill=tk.X, pady=2)
-
-        # 🆕 BOTÓN DE RESETEO
-        self.btn_reset = ttk.Button(btn_frame, text="🔄 REINICIAR PROGRESO (DESDE 0%)", command=self.reset_jauria)
+        self.btn_reset = ttk.Button(btn_frame, text="🔄 LIMPIAR RADAR Y LOGS", command=self.reset_jauria)
         self.btn_reset.pack(fill=tk.X, pady=(10, 2))
 
         # --- PANEL CENTRAL: VISOR GRAFICO RADAR (CANVAS) ---
-        center_panel = ttk.LabelFrame(self, text=" 🗺️ Radar del Chunk (1000x1000) ", padding=10)
+        center_panel = ttk.LabelFrame(self, text=" 🗺️ Radar Táctico (1000x1000) ", padding=10)
         center_panel.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=5, pady=5)
-
-        self.canvas = tk.Canvas(center_panel, width=400, height=400, bg="#1e1e1e", highlightthickness=0)
+        self.canvas = tk.Canvas(center_panel, width=400, height=400, bg="#0a0a0a", highlightthickness=0)
         self.canvas.pack(anchor=tk.CENTER, expand=True, pady=5)
         self._init_radar_grid()
 
         prog_frame = ttk.Frame(center_panel)
         prog_frame.pack(fill=tk.X, pady=5)
-
-        self.lbl_progress = ttk.Label(prog_frame, text="Progreso: 0% (0 / 1,000,000 px)")
+        self.lbl_progress = ttk.Label(prog_frame, text="Muestreo: 0% (0 / 2,500 Muestras)")
         self.lbl_progress.pack(anchor=tk.W)
-
         self.progress_bar = ttk.Progressbar(prog_frame, mode="determinate", maximum=100)
         self.progress_bar.pack(fill=tk.X, pady=2)
 
         # --- PANEL DERECHO: HALLAZGOS Y LINKS ---
-        right_panel = ttk.LabelFrame(self, text=" 🎯 Hallazgos en Vivo ", padding=10)
+        right_panel = ttk.LabelFrame(self, text=" 🎯 Confirmaciones en Vivo ", padding=10)
         right_panel.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=5, pady=5)
-
         columns = ("time", "user", "coords", "hound")
         self.tree = ttk.Treeview(right_panel, columns=columns, show="headings", height=12)
         self.tree.heading("time", text="Hora")
         self.tree.heading("user", text="Usuario")
         self.tree.heading("coords", text="Coordenada")
         self.tree.heading("hound", text="Sabueso")
-
         self.tree.column("time", width=60)
         self.tree.column("user", width=100)
         self.tree.column("coords", width=90)
@@ -112,14 +117,12 @@ class SabuesoTab(ttk.Frame):
         self.tree.pack(fill=tk.BOTH, expand=True, pady=5)
 
         self.item_links = {}
-
         btn_copy = ttk.Button(right_panel, text="📋 Copiar Link Seleccionado", command=self.copy_selected_link)
         btn_copy.pack(fill=tk.X, pady=2)
 
         # --- TERMINAL DE LOGS EN VIVO ---
         log_frame = ttk.LabelFrame(self, text=" 🖥️ Terminal de Sabuesos (Live) ", padding=5)
         log_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=5, pady=5)
-        
         self.txt_logs = tk.Text(log_frame, height=7, bg="#0c0c0c", fg="#00ff00", font=("Consolas", 9))
         self.txt_logs.pack(fill=tk.BOTH, expand=True, pady=2)
 
@@ -146,38 +149,33 @@ class SabuesoTab(ttk.Frame):
         try:
             raw_text = self.txt_targets.get().replace("\n", ",").replace(" ", ",")
             targets = [int(i.strip()) for i in raw_text.split(",") if i.strip().isdigit()]
-            
             if not targets:
                 messagebox.showerror("Error", "Debes ingresar al menos un ID numérico válido.")
                 return
 
-            tile_x = int(self.ent_tile_x.get())
-            tile_y = int(self.ent_tile_y.get())
-            hounds = int(self.spn_hounds.get())
+           payload = {
+                "target_ids": targets,
+                "tile_x": int(self.ent_tile_x.get()),
+                "tile_y": int(self.ent_tile_y.get()),
+                "num_hounds": int(self.spn_hounds.get()),
+                "sample_step": int(self.spn_step.get()),
+                "amnesia_radius": int(self.spn_amnesia.get()), # 👈 Actualizado
+                "swarm_size": int(self.spn_swarm.get())        # 👈 Actualizado
+            }
+
         except ValueError:
-            messagebox.showerror("Error", "Revisa los campos numéricos de Tile X, Tile Y o Sabuesos.")
+            messagebox.showerror("Error", "Revisa que todos los campos sean números válidos.")
             return
 
-        url = f"{self.get_server_url()}/sabueso/start"
-        payload = {
-            "target_ids": targets,
-            "tile_x": tile_x,
-            "tile_y": tile_y,
-            "xmin": 0, "xmax": 999,
-            "ymin": 0, "ymax": 999,
-            "num_hounds": hounds
-        }
-
         try:
-            r = requests.post(url, json=payload, timeout=5)
+            r = requests.post(f"{self.get_server_url()}/sabueso/start", json=payload, timeout=5)
             if r.status_code == 200:
+                self._init_radar_grid()
                 self.btn_start.config(state=tk.DISABLED)
                 self.btn_stop.config(state=tk.NORMAL)
                 self.is_monitoring = True
-            else:
-                messagebox.showerror("Error", f"Error al iniciar Jauría: {r.text}")
-        except Exception as e:
-            messagebox.showerror("Error de conexión", str(e))
+            else: messagebox.showerror("Error", r.text)
+        except Exception as e: messagebox.showerror("Error de conexión", str(e))
 
     def stop_jauria(self):
         url = f"{self.get_server_url()}/sabueso/stop"
@@ -238,23 +236,28 @@ class SabuesoTab(ttk.Frame):
         try:
             # 0. Sincronización inicial la primera vez que se reciben datos
             if not self.config_loaded and isinstance(data, dict):
-                target_ids = data.get("target_ids") or []
-                tile_x = data.get("tile_x", 460)
-                tile_y = data.get("tile_y", 874)
-                num_hounds = data.get("num_hounds", 8)
+                self.txt_targets.delete(0, tk.END)
+                self.txt_targets.insert(0, ", ".join(str(i) for i in (data.get("target_ids") or [])))
+                self.ent_tile_x.delete(0, tk.END); self.ent_tile_x.insert(0, str(data.get("tile_x", 460)))
+                self.ent_tile_y.delete(0, tk.END); self.ent_tile_y.insert(0, str(data.get("tile_y", 874)))
+                self.spn_hounds.set(data.get("num_hounds", 8))
 
                 # Rellenar cajas de texto
-                ids_str = ", ".join(str(i) for i in target_ids)
-                self.txt_targets.delete(0, tk.END)
-                self.txt_targets.insert(0, ids_str)
+                # ids_str = ", ".join(str(i) for i in target_ids)
+                # self.txt_targets.delete(0, tk.END)
+                # self.txt_targets.insert(0, ids_str)
 
-                self.ent_tile_x.delete(0, tk.END)
-                self.ent_tile_x.insert(0, str(tile_x))
+                # self.ent_tile_x.delete(0, tk.END)
+                # self.ent_tile_x.insert(0, str(tile_x))
 
-                self.ent_tile_y.delete(0, tk.END)
-                self.ent_tile_y.insert(0, str(tile_y))
+                # self.ent_tile_y.delete(0, tk.END)
+                # self.ent_tile_y.insert(0, str(tile_y))
 
-                self.spn_hounds.set(num_hounds)
+                # self.spn_hounds.set(num_hounds)
+                # 🆕 Sincronizar UI de Estrategia
+                self.spn_step.set(data.get("sample_step", 20))
+                self.spn_amnesia.set(data.get("amnesia_radius", 100))
+                self.spn_swarm.set(data.get("swarm_size", 50))
                 self.config_loaded = True
 
             # Actualizar estado de los botones (Soltar / Detener)
@@ -274,29 +277,29 @@ class SabuesoTab(ttk.Frame):
             self.progress_bar["value"] = percentage
             self.lbl_progress.config(text=f"Progreso: {percentage}% ({scanned:,} / {total:,} Lotes Completados)")
 
-            # 2. Pintar Celdas Verdes (Lotes Completados)
-            completed_batches = data.get("completed_batches", [])
-            for gx, gy in completed_batches:
+            # 2. Pintar "Dardos" (Verde visible)
+            visited_sample = data.get("visited_sample", [])
+            for x, y in visited_sample:
+                gx = int(x / 10)
+                gy = int(y / 10)
                 if (gx, gy) not in self.painted_cells:
                     rect_id = self.cell_pixels.get((gx, gy))
                     if rect_id:
-                        self.canvas.itemconfig(rect_id, fill="#00e676")
-                    self.painted_cells.add((gx, gy))
+                        self.canvas.itemconfig(rect_id, fill="#2e7d32") # Verde medio
+                        self.painted_cells.add((gx, gy))
 
-            # 3. Pintar Celdas Rojas (Hallazgos - Sobrescribe al verde)
+            # 3. Pintar Celdas Rojas (Sobrescribe al verde si es necesario)
             findings = data.get("findings", [])
             for f in findings:
-                # Calcular a qué lote pertenece el píxel exacto
                 gx = int(f["x"] / 10)
                 gy = int(f["y"] / 10)
-                
                 rect_id = self.cell_pixels.get((gx, gy))
                 if rect_id:
                     self.canvas.itemconfig(rect_id, fill="#ff1744")
+                    self.painted_cells.add((gx, gy))
 
                 link = f["link"]
                 item_id = f"{f['timestamp']}_{f['x']}_{f['y']}"
-                
                 if item_id not in self.seen_findings:
                     row_id = self.tree.insert("", "end", values=(f["timestamp"], f["user_name"], f"({f['x']},{f['y']})", f"#{f['hound_id']}"))
                     self.item_links[row_id] = link

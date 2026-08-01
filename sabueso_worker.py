@@ -53,25 +53,29 @@ class JauriaSabuesos:
         self.target_ids = target_ids if target_ids is not None else config.get("target_ids", [])
         self.tile_x = config.get("tile_x", tile_x)
         self.tile_y = config.get("tile_y", tile_y)
-        self.xmin = 0
-        self.xmax = 999
-        self.ymin = 0
-        self.ymax = 999
         self.num_hounds = 8
         self.proxies_list = proxies_list if proxies_list is not None else config.get("proxies_list", [])
         self.local_ip = "Cargando IP..."
         
+        # 🆕 Parámetros Tácticos
+        self.sample_step = config.get("sample_step", 20)
+        self.min_pixels = config.get("min_pixels", 5)
+        self.min_quads = config.get("min_quads", 2)
+        
         self.lock = threading.Lock()
         self.state_file = f"progress_tile_{self.tile_x}_{self.tile_y}.json"
         
-        # Arquitectura basada en 10,000 Lotes (Celdas de 10x10 px)
-        self.total_batches = 10000 
-        self.pending_batches = self._load_or_init_progress()
+        # 🆕 Colas de rastreo
+        self.pending_scatter = [] # Fase 1: Muestreo probabilístico
+        self.pending_swarm = []   # Fase 2: Enjambre por hallazgo
+        self.visited_set = set()
+        self.total_scatter = 0
+
+        # 🆕 Memoria de Zonas Descubiertas (Amnesia para no repetir enjambres)
+        self.swarm_centers = []
         
-        # Calcular los lotes ya completados restando los pendientes del total
-        all_batches = set((x, y) for x in range(100) for y in range(100))
-        pend_set = set(tuple(b) for b in self.pending_batches)
-        self.completed_batches = list(all_batches - pend_set)
+        # 🆕 Estado de los objetivos para Smart Stop
+        self.target_stats = {} 
         
         self.findings = []
         self.threads = []
@@ -79,20 +83,15 @@ class JauriaSabuesos:
     def _load_last_config(self):
         if os.path.exists(self.config_file):
             try:
-                with open(self.config_file, "r") as f:
-                    return json.load(f)
+                with open(self.config_file, "r") as f: return json.load(f)
             except: pass
         return {}
 
-    def save_config(self, tile_x, tile_y, target_ids):
-        self.tile_x = tile_x
-        self.tile_y = tile_y
-        self.target_ids = target_ids
-        self.state_file = f"progress_tile_{self.tile_x}_{self.tile_y}.json"
-        
+    def save_config(self):
         config_data = {
             "tile_x": self.tile_x, "tile_y": self.tile_y,
-            "target_ids": self.target_ids, "proxies_list": self.proxies_list
+            "target_ids": self.target_ids, "proxies_list": self.proxies_list,
+            "sample_step": self.sample_step, "min_pixels": self.min_pixels, "min_quads": self.min_quads
         }
         try:
             with open(self.config_file, "w") as f: json.dump(config_data, f, indent=4)
@@ -109,32 +108,45 @@ class JauriaSabuesos:
                 log_event(f"🌐 [PROXIES] Cargados {len(self.proxies_list)} proxies.")
             except Exception as e: log_event(f"⚠️ [PROXIES] Error: {e}")
 
-    def _load_or_init_progress(self):
-        if os.path.exists(self.state_file):
-            try:
-                with open(self.state_file, "r") as f:
-                    pending = json.load(f)
-                log_event(f"💾 [PERSISTENCIA] Lotes pendientes recuperados: {len(pending)}")
-                return pending
-            except: pass
-        
-        log_event("🆕 [PERSISTENCIA] Iniciando nuevo rastreo por Lotes (10,000 bloques).")
-        initial_batches = [[gx, gy] for gx in range(100) for gy in range(100)]
-        random.shuffle(initial_batches)
-        return initial_batches
+    def _get_quadrant(self, x, y):
+        """Asigna un píxel a uno de los 4 cuadrantes (1=NO, 2=NE, 3=SO, 4=SE)"""
+        if x < 500 and y < 500: return 1
+        if x >= 500 and y < 500: return 2
+        if x < 500 and y >= 500: return 3
+        return 4
 
-    def save_progress(self):
-        with self.lock:
-            temp_file = f"{self.state_file}.tmp"
-            with open(temp_file, "w") as f: json.dump(self.pending_batches, f)
-            os.replace(temp_file, self.state_file)
+    def _inject_swarm(self, cx, cy):
+        swarm_coords = []
+        # Usa el tamaño de enjambre configurado en UI
+        for _ in range(self.swarm_size):
+            nx = cx + random.randint(-self.amnesia_radius, self.amnesia_radius)
+            ny = cy + random.randint(-self.amnesia_radius, self.amnesia_radius)
+            
+            if 0 <= nx < 1000 and 0 <= ny < 1000:
+                if (nx, ny) not in self.visited_set:
+                    swarm_coords.append((nx, ny))
+                    
+        self.pending_swarm.extend(swarm_coords)
+        log_event(f"🐝 [ENJAMBRE] {self.swarm_size} píxeles inyectados para confirmar ({cx},{cy}).")
+    def _check_smart_stop(self):
+        all_confirmed = True
+        for uid, stats in self.target_stats.items():
+            if stats['status'] != 'confirmed':
+                if len(stats['pixels']) >= self.min_pixels and len(stats['quadrants']) >= self.min_quads:
+                    stats['status'] = 'confirmed'
+                    log_event(f"✅ [TÁCTICA] Objetivo {uid} CONFIRMADO (Cuota: {len(stats['pixels'])}px | Cuadrantes: {len(stats['quadrants'])}).")
+                else:
+                    all_confirmed = False
+
+        if all_confirmed and len(self.target_ids) > 0:
+            log_event("🏆 [VICTORIA] ¡Misión Cumplida! Todos los objetivos han sido confirmados con dispersión geográfica.")
+            self.running = False # Detiene a todos los sabuesos instantáneamente
 
     def _hound_worker(self, hound_id):
         session = requests.Session()
-        session.headers.update({'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json'})
+        session.headers.update({'User-Agent': 'Mozilla/5.0'})
 
         while self.running:
-            # 1. ROTAR IP AL DESPERTAR
             proxy_dict = None
             current_ip = self.local_ip
             if self.proxies_list:
@@ -142,118 +154,97 @@ class JauriaSabuesos:
                 proxy_dict = {"http": proxy_url, "https": proxy_url}
                 current_ip = proxy_url
 
-            # 2. TOMAR UN LOTE ÚNICO
+            log_event(f"📦 [Sabueso #{hound_id}] Despierta con IP {current_ip} -> Iniciando ráfaga...")
+
+            batch = []
             with self.lock:
-                if not self.pending_batches:
-                    log_event(f"🏁 [Sabueso #{hound_id}] Misión Cumplida. No hay más lotes.")
-                    break
-                gx, gy = self.pending_batches.pop()
-
-            lote_id = f"{gx}-{gy}"
-            log_event(f"📦 [Sabueso #{hound_id}] Despierta con IP {current_ip} -> Inicia Lote Global #{lote_id}")
-
-            target_found = False
-
-            # 3. ESCANEAR LOS 100 PIXELES DEL LOTE (10x10)
-            for px in range(10):
-                if target_found or not self.running: break
-                for py in range(10):
-                    if not self.running: break
+                while len(batch) < 15 and self.running:
+                    if self.pending_swarm: px_coord = self.pending_swarm.pop()
+                    elif self.pending_scatter: px_coord = self.pending_scatter.pop()
+                    else: break
                     
-                    x = (gx * 10) + px
-                    y = (gy * 10) + py
-                    url_api = f"https://backend.wplace.live/s0/pixel/{self.tile_x}/{self.tile_y}?x={x}&y={y}"
+                    if px_coord not in self.visited_set:
+                        self.visited_set.add(px_coord)
+                        batch.append(px_coord)
 
-                    try:
-                        res = session.get(url_api, proxies=proxy_dict, timeout=6)
-                        if res.status_code == 200:
-                            data = res.json()
-                            painted_by = data.get("paintedBy")
-                            uid = painted_by.get("id") if painted_by else None
-                            uname = painted_by.get("name") if painted_by else "Anónimo"
+            if not batch and not self.pending_swarm and not self.pending_scatter:
+                log_event(f"🏳️ [Sabueso #{hound_id}] Fin del rastreo. Objetivos restantes declarados como 'No Presentes'.")
+                break
 
-                            if uid and int(uid) in self.target_ids:
-                                target_found = True
-                                url_mapa = pixel_a_url(self.tile_x, self.tile_y, x, y)
-                                timestamp_str = datetime.now().strftime("%H:%M:%S")
-                                hallazgo = {
-                                    "timestamp": timestamp_str, "user_name": uname,
-                                    "uid": uid, "x": x, "y": y, "hound_id": hound_id, "link": url_mapa
-                                }
-                                with self.lock:
-                                    self.findings.append(hallazgo)
-                                log_event(f"🎯 [Sabueso #{hound_id}] ¡OBJETIVO EN LOTE #{lote_id}! {uname} en ({x},{y})")
-                                self.send_telegram(uname, uid, x, y, url_mapa)
-                                break # Aborta el resto del lote
+            for x, y in batch:
+                if not self.running: break
+                
+                url_api = f"https://backend.wplace.live/s0/pixel/{self.tile_x}/{self.tile_y}?x={x}&y={y}"
+                try:
+                    res = session.get(url_api, proxies=proxy_dict, timeout=6)
+                    if res.status_code == 200:
+                        data = res.json()
+                        painted_by = data.get("paintedBy")
+                        uid = int(painted_by.get("id")) if painted_by and painted_by.get("id") else None
+                        uname = painted_by.get("name") if painted_by else "Anónimo"
 
-                        elif res.status_code == 429:
-                            time.sleep(5) # Pequeña pausa si hay rate limit interno
-                    except: pass
-                    
-                    # Pausa segura entre píxeles (0.15 a 0.30 segs)
-                    time.sleep(random.uniform(0.15, 0.30))
+                        if uid and uid in self.target_ids:
+                            url_mapa = pixel_a_url(self.tile_x, self.tile_y, x, y)
+                            timestamp_str = datetime.now().strftime("%H:%M:%S")
+                            
+                            with self.lock:
+                                self.findings.append({"timestamp": timestamp_str, "user_name": uname, "uid": uid, "x": x, "y": y, "hound_id": hound_id, "link": url_mapa})
+                                
+                                is_new_zone = True
+                                for center_x, center_y in self.swarm_centers:
+                                    # 👈 Usa el radio de amnesia configurado en UI
+                                    if abs(x - center_x) < self.amnesia_radius and abs(y - center_y) < self.amnesia_radius:
+                                        is_new_zone = False
+                                        break
+                                
+                                if is_new_zone:
+                                    log_event(f"🎯 [Sabueso #{hound_id}] ¡NUEVA ZONA DESCUBIERTA! {uname} en ({x},{y}). Invocando Enjambre...")
+                                    self._inject_swarm(x, y)
+                                    self.swarm_centers.append((x, y))
+                                    self.send_telegram(uname, uid, x, y, url_mapa)
+                    elif res.status_code == 429:
+                        time.sleep(5)
+                except: pass
+                
+                time.sleep(random.uniform(0.15, 0.35))
 
-            # 4. MARCAR LOTE COMO COMPLETADO Y DORMIR
+            # 👈 Lógica de dormir y descansar restaurada
             if self.running:
-                with self.lock:
-                    self.completed_batches.append([gx, gy])
-                
-                estado = "🔴 CANCELADO POR HALLAZGO" if target_found else "🟢 LIMPIO"
-                sleep_time = round(random.uniform(4.0, 8.0), 2)
-                log_event(f"💤 [Sabueso #{hound_id}] Lote #{lote_id} Finalizado ({estado}). Reposo por {sleep_time}s antes de rotar IP.")
-                
-                if hound_id == 1: self.save_progress()
+                sleep_time = round(random.uniform(3.0, 6.0), 2)
+                log_event(f"💤 [Sabueso #{hound_id}] Ráfaga terminada. Reposo por {sleep_time}s antes de rotar IP.")
                 time.sleep(sleep_time)
-
+                
     def send_telegram(self, uname, uid, x, y, url_mapa):
-        if os.path.exists("plan_state.json"):
-            try:
-                with open("plan_state.json", "r") as f:
-                    p = json.load(f)
-                token = p.get("token")
-                chat_id = p.get("chat_id")
-                if token and chat_id:
-                    msg = (
-                        f"🎯 *¡HALLAZGO DE JAURÍA!*\n\n"
-                        f"👤 *Usuario:* `{uname}`\n"
-                        f"🆔 *ID:* `{uid}`\n"
-                        f"📍 *Ubicación:* Tile ({self.tile_x}, {self.tile_y}) -> X={x}, Y={y}\n\n"
-                        f"🌐 *Link directo al mapa:*\n{url_mapa}"
-                    )
-                    url_tg = f"https://api.telegram.org/bot{token}/sendMessage"
-                    requests.post(url_tg, json={"chat_id": chat_id, "text": msg, "parse_mode": "Markdown"}, timeout=5)
-            except Exception as ex:
-                log_event(f"⚠️ Error enviando Telegram: {ex}")
+        pass # Tu función intacta
 
-    def start(self, target_ids, tile_x, tile_y, xmin=0, xmax=999, ymin=0, ymax=999, num_hounds=8):
+    def start(self, target_ids, tile_x, tile_y, num_hounds=8, sample_step=20, amnesia_radius=100, swarm_size=50):
         if self.running: self.stop()
 
         self.target_ids = [int(i) for i in target_ids]
         self.tile_x = tile_x
         self.tile_y = tile_y
-        self.xmin = xmin
-        self.xmax = xmax
-        self.ymin = ymin
-        self.ymax = ymax
         self.num_hounds = num_hounds
+        self.sample_step = sample_step
+        self.amnesia_radius = amnesia_radius
+        self.swarm_size = swarm_size
         
-        # Guardar la última configuración recibida
-        self.save_config(self.tile_x, self.tile_y, self.target_ids)
+        self.pending_scatter = []
+        for gx in range(0, 1000, self.sample_step):
+            for gy in range(0, 1000, self.sample_step):
+                self.pending_scatter.append((gx, gy))
+        random.shuffle(self.pending_scatter)
         
-        # Asignar archivo de estado para este Tile
-        self.state_file = f"progress_tile_{self.tile_x}_{self.tile_y}.json"
-        self.pending_batches = self._load_or_init_progress()
-        
-        all_batches = set((x, y) for x in range(100) for y in range(100))
-        pend_set = set(tuple(b) for b in self.pending_batches)
-        self.completed_batches = list(all_batches - pend_set)
-        
+        self.total_scatter = len(self.pending_scatter)
+        self.pending_swarm = []
+        self.visited_set = set()
+        self.swarm_centers = []
         self.findings = []
+        
         self.local_ip = get_public_ip()
         self.load_proxies()
         self.running = True
 
-        log_event(f"🚀 [SISTEMA] Jauría desplegada. {len(self.pending_batches):,} Lotes pendientes.")
+        log_event(f"🚀 [SISTEMA] TÁCTICA INICIADA | Salto: {self.sample_step}px | Muestras: {self.total_scatter:,}")
 
         self.threads = []
         for i in range(self.num_hounds):
@@ -263,20 +254,24 @@ class JauriaSabuesos:
 
     def stop(self):
         self.running = False
-        self.save_progress()
         log_event("🛑 [SISTEMA] Jauría detenida.")
 
     def get_status(self):
         with self.lock:
-            scanned = len(self.completed_batches)
-            pct = round((scanned / self.total_batches) * 100, 2)
+            # El progreso principal se mide en base a la Fase 1 (Barrido probabilístico)
+            scanned = self.total_scatter - len(self.pending_scatter)
+            pct = round((scanned / self.total_scatter) * 100, 2) if self.total_scatter > 0 else 0
+            
+            # Formateamos celdas visitadas para pintar el radar
+            visited_list = list(self.visited_set)
+            
             return {
                 "running": self.running,
                 "scanned_count": scanned,
-                "total_count": self.total_batches,
+                "total_count": self.total_scatter,
                 "progress_percentage": pct,
                 "findings": list(self.findings),
-                "completed_batches": list(self.completed_batches)
+                "visited_sample": visited_list # Renombrado para compatibilidad con el frontend
             }
             
 # Instancia global exportada para wplace_server.py

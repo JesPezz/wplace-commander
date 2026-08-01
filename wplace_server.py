@@ -184,23 +184,22 @@ def sabueso_start():
         target_ids = data.get('target_ids', [])
         tile_x = data.get('tile_x', 460)
         tile_y = data.get('tile_y', 874)
-        xmin = data.get('xmin', 0)
-        xmax = data.get('xmax', 999)
-        ymin = data.get('ymin', 0)
-        ymax = data.get('ymax', 999)
         num_hounds = data.get('num_hounds', 8)
+        
+        sample_step = data.get('sample_step', 20)
+        amnesia_radius = data.get('amnesia_radius', 100) # 👈 Nuevo parámetro
+        swarm_size = data.get('swarm_size', 50)          # 👈 Nuevo parámetro
 
         if not target_ids:
             return jsonify({"status": "error", "msg": "Lista target_ids requerida"}), 400
 
-        # Iniciar en un hilo secundario para responder rápido a HTTP
         threading.Thread(
             target=jauria.start,
-            args=(target_ids, tile_x, tile_y, xmin, xmax, ymin, ymax, num_hounds),
+            args=(target_ids, tile_x, tile_y, num_hounds, sample_step, amnesia_radius, swarm_size),
             daemon=True
         ).start()
 
-        return jsonify({"status": "ok", "msg": "Jauría iniciada correctamente."})
+        return jsonify({"status": "ok", "msg": "Jauría táctica iniciada."})
     except Exception as e:
         return jsonify({"status": "error", "msg": str(e)}), 500
 
@@ -217,17 +216,14 @@ def sabueso_stop():
 def sabueso_reset():
     try:
         jauria.stop()
-        state_file = f"progress_tile_{jauria.tile_x}_{jauria.tile_y}.json"
-        if os.path.exists(state_file):
-            os.remove(state_file)
         
-        # Limpiar memoria de la Jauría
-        jauria.pending_batches = jauria._load_or_init_progress()
-        jauria.completed_batches = []  # 👈 ESTO FALTABA PARA LIMPIAR EL RADAR
+        # 👈 Lógica de reset corregida para la nueva arquitectura
+        jauria.pending_scatter = []
+        jauria.pending_swarm = []
+        jauria.visited_set = set()
+        jauria.swarm_centers = []
         jauria.findings = []
-        jauria.visited_sample = []
         
-        # Limpiar el archivo de logs físico
         with open("sabueso.log", "w", encoding="utf-8") as f:
             f.write("=== HISTORIAL LIMPIADO ===\n")
 
@@ -243,11 +239,13 @@ def sabueso_status():
         status["tile_x"] = getattr(jauria, "tile_x", 460)
         status["tile_y"] = getattr(jauria, "tile_y", 874)
         status["num_hounds"] = getattr(jauria, "num_hounds", 8)
+        status["sample_step"] = getattr(jauria, "sample_step", 20)
+        status["amnesia_radius"] = getattr(jauria, "amnesia_radius", 100)
+        status["swarm_size"] = getattr(jauria, "swarm_size", 50)
+        
         return jsonify(status)
     except Exception as e:
         return jsonify({"running": False, "error": str(e)}), 200
-
-        from collections import deque
 
 @app.route('/sabueso/logs', methods=['GET'])
 def sabueso_logs():
