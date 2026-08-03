@@ -1,17 +1,18 @@
-import tkinter as tk
-from tkinter import messagebox, ttk, simpledialog, Menu, filedialog
-from PIL import Image, ImageTk, ImageDraw, PngImagePlugin
-import requests
-from io import BytesIO
-import threading
-import time
-import json
 import os
 import sys
-import subprocess
-import platform
+import json
+import time
 import re
+import threading
+import platform
+import subprocess
 from datetime import datetime, timedelta
+from io import BytesIO
+
+import tkinter as tk
+from tkinter import ttk, messagebox, simpledialog, Menu, filedialog
+from PIL import Image, ImageTk, ImageDraw, PngImagePlugin
+import requests
 import pyperclip
 
 CONFIG_FILE = "client_config.json"
@@ -34,91 +35,223 @@ def get_resource_path(relative_path: str) -> str:
         return os.path.join(sys._MEIPASS, relative_path)
     return os.path.join(os.path.abspath("."), relative_path)
 
+
 class WPlaceClient:
     def __init__(self, root):
         self.root = root
         self.root.title("WPlace Commander v20.0 (Clean Ops)")
         self.root.geometry("1280x850")
+        
+        # Cargar configuración persistente
+        self.config = self.cargar_config()
+        
+        # Variables de estado
+        self.server_ip = tk.StringVar(value=self.config.get("server_ip", "http://192.168.1.107:5000"))
+        self.preview_image_raw = None
+        self.zoom_level = 1.0
+        self.click_count = 0
+        self.running = True
 
-        # =====================================================================
-        # 🎨 CARGA DEFENSIVA DEL ICONO
-        # =====================================================================
+        # --- Carga Defensiva de Icono ---
         icon_path = get_resource_path("wplace_icon.ico")
         if os.path.exists(icon_path):
             try:
                 self.root.iconbitmap(icon_path)
             except Exception as e:
-                print(f"[Aviso] No se pudo asignar el icono a la ventana: {e}")
-        
-        # Configuración de estilos Tkinter
+                print(f"[Aviso] No se pudo asignar el icono: {e}")
+
+        # --- Configuración de Estilos ---
         style = ttk.Style()
         style.theme_use('clam')
-        style.configure("Treeview", rowheight=30, font=('Segoe UI', 9))
-        style.configure("Treeview.Heading", font=('Segoe UI', 10, 'bold'), background="#d9d9d9")
-        
-        style.configure("Green.TButton", font=('Segoe UI', 9), background="#E8F5E9", foreground="#2E7D32")
-        style.configure("Red.TButton", font=('Segoe UI', 9), background="#FFEBEE", foreground="#C62828")
-        style.configure("Blue.TButton", font=('Segoe UI', 9), background="#E3F2FD", foreground="#1565C0")
-        style.configure("Orange.TButton", font=('Segoe UI', 9), background="#FFF3E0", foreground="#EF6C00")
-        style.configure("Accent.TButton", font=('Segoe UI', 10, 'bold'), background="#2196F3", foreground="white")
-        style.configure("Danger.TButton", font=('Segoe UI', 9), bold=True, background="#F44336", foreground="white")
-        style.configure("Warning.TButton", font=('Segoe UI', 9), bold=True, background="#FF9800", foreground="white")
-        
-        self.config = self.cargar_config()
-        self.server_ip = tk.StringVar(value=self.config.get("server_ip", "http://192.168.1.107:5000"))
-        
-        self.click_count = 0
-        self.preview_image_raw = None
-        self.tk_image_ref = None
-        self.zoom_level = 1.0
-        self.checker_tile = None 
-        
-        self.notebook = ttk.Notebook(root)
-        self.notebook.pack(fill='both', expand=True, padx=5, pady=5)
-        
+        style.configure("Accent.TButton", font=('Segoe UI', 9, 'bold'), foreground="white", background="#007ACC")
+        style.configure("Green.TButton", font=('Segoe UI', 9, 'bold'), foreground="white", background="#2E7D32")
+        style.configure("Blue.TButton", font=('Segoe UI', 9, 'bold'), foreground="white", background="#1565C0")
+        style.configure("Orange.TButton", font=('Segoe UI', 9, 'bold'), foreground="white", background="#E65100")
+        style.configure("Red.TButton", font=('Segoe UI', 9, 'bold'), foreground="white", background="#C62828")
+        style.configure("Warning.TButton", font=('Segoe UI', 9, 'bold'), foreground="white", background="#D84315")
+
+        # --- Montaje de Notebook (Pestañas) ---
+        self.notebook = ttk.Notebook(self.root)
+        self.notebook.pack(fill='both', expand=True)
+
         self.tab_new = ttk.Frame(self.notebook)
         self.tab_manager = ttk.Frame(self.notebook)
-        self.tab_system = ttk.Frame(self.notebook)
         self.tab_planner = ttk.Frame(self.notebook)
-        self.tab_telegram = ttk.Frame(self.notebook) 
-        
-        self.notebook.add(self.tab_new, text="🔭 Misión")
+        self.tab_telegram = ttk.Frame(self.notebook)
+        self.tab_system = ttk.Frame(self.notebook)
+
+        self.notebook.add(self.tab_new, text="🚀 Misión")
         self.notebook.add(self.tab_manager, text="📡 Radar de Tareas")
         self.notebook.add(self.tab_planner, text="📅 Planificador")
-        self.notebook.add(self.tab_telegram, text="📱 Telegram") 
+        self.notebook.add(self.tab_telegram, text="📱 Telegram & Proxy")
         self.notebook.add(self.tab_system, text="⚙️ Sistema")
-        
+
+        # --- Inicializar Sub-Interfaces en Orden Estricto ---
         self.setup_tab_new()
         self.setup_tab_manager()
         self.setup_tab_planner()
         self.setup_tab_telegram()
         self.setup_tab_system()
-        
-        self.running = True
-        threading.Thread(target=self.monitor_loop, daemon=True).start()
 
-    # ================= PESTAÑA TELEGRAM =================
+        # Cierre limpio
+        self.root.protocol("WM_DELETE_WINDOW", self.on_close)
+
+        # Iniciar monitoreo en hilo secundario (Background Thread)
+        self.monitor_thread = threading.Thread(target=self.monitor_loop, daemon=True)
+        self.monitor_thread.start()
+
+    def on_close(self):
+        self.running = False
+        self.guardar_config()
+        self.root.destroy()
+
+    # =========================================================================
+    # PESTAÑA TELEGRAM Y PROXY (Manejo Defensivo de Widgets)
+    # =========================================================================
     def setup_tab_telegram(self):
-        f = ttk.LabelFrame(self.tab_telegram, text="Credenciales Globales de Telegram")
-        f.pack(fill='both', expand=True, padx=20, pady=20)
+        main_f = ttk.Frame(self.tab_telegram)
+        main_f.pack(fill='both', expand=True, padx=20, pady=10)
+
+        # --- Frame Telegram ---
+        f = ttk.LabelFrame(main_f, text="📱 Credenciales Globales de Telegram")
+        f.pack(fill='x', padx=5, pady=5)
         
-        ttk.Label(f, text="Bot Token:").grid(row=0, column=0, padx=10, pady=10, sticky='e')
+        ttk.Label(f, text="Bot Token:").grid(row=0, column=0, padx=10, pady=5, sticky='e')
         self.et_tok = tk.Entry(f, width=45)
         self.et_tok.insert(0, self.config.get("tg_token", ""))
-        self.et_tok.grid(row=0, column=1, padx=10, pady=10)
+        self.et_tok.grid(row=0, column=1, padx=10, pady=5)
         
-        ttk.Label(f, text="Chat ID:").grid(row=1, column=0, padx=10, pady=10, sticky='e')
+        ttk.Label(f, text="Chat ID:").grid(row=1, column=0, padx=10, pady=5, sticky='e')
         self.et_chat = tk.Entry(f, width=45)
         self.et_chat.insert(0, self.config.get("tg_chat", ""))
-        self.et_chat.grid(row=1, column=1, padx=10, pady=10)
+        self.et_chat.grid(row=1, column=1, padx=10, pady=5)
         
-        ttk.Button(f, text="💾 GUARDAR CONFIGURACIÓN", style="Accent.TButton", command=self.guardar_tg).grid(row=2, column=0, columnspan=2, pady=20)
-        
+        ttk.Button(f, text="💾 GUARDAR CREDENCIALES TELEGRAM", style="Accent.TButton", command=self.guardar_tg).grid(row=2, column=0, columnspan=2, pady=10)
+
+        # --- Frame Proxy Server ---
+        f_proxy = ttk.LabelFrame(main_f, text="🌐 Configuración del Proxy Server")
+        f_proxy.pack(fill='x', padx=5, pady=10)
+
+        self.var_proxy_enable = tk.BooleanVar(value=False)
+        chk_en = ttk.Checkbutton(f_proxy, text="Habilitar uso de Proxy HTTP/HTTPS/SOCKS5", variable=self.var_proxy_enable)
+        chk_en.grid(row=0, column=0, columnspan=2, sticky='w', padx=10, pady=5)
+
+        ttk.Label(f_proxy, text="Host / IP:").grid(row=1, column=0, padx=10, pady=2, sticky='e')
+        self.et_proxy_host = tk.Entry(f_proxy, width=30)
+        self.et_proxy_host.grid(row=1, column=1, padx=10, pady=2, sticky='w')
+
+        ttk.Label(f_proxy, text="Puerto:").grid(row=2, column=0, padx=10, pady=2, sticky='e')
+        self.et_proxy_port = tk.Entry(f_proxy, width=15)
+        self.et_proxy_port.grid(row=2, column=1, padx=10, pady=2, sticky='w')
+
+        ttk.Label(f_proxy, text="Usuario:").grid(row=3, column=0, padx=10, pady=2, sticky='e')
+        self.et_proxy_user = tk.Entry(f_proxy, width=30)
+        self.et_proxy_user.grid(row=3, column=1, padx=10, pady=2, sticky='w')
+
+        ttk.Label(f_proxy, text="Contraseña:").grid(row=4, column=0, padx=10, pady=2, sticky='e')
+        self.et_proxy_pass = tk.Entry(f_proxy, width=30, show="*")
+        self.et_proxy_pass.grid(row=4, column=1, padx=10, pady=2, sticky='w')
+
+        self.lbl_proxy_status = ttk.Label(f_proxy, text="Estado Proxy: Cargando...", font=('Segoe UI', 9, 'italic'))
+        self.lbl_proxy_status.grid(row=5, column=0, columnspan=2, pady=5)
+
+        btn_box = ttk.Frame(f_proxy)
+        btn_box.grid(row=6, column=0, columnspan=2, pady=10)
+
+        ttk.Button(btn_box, text="⚙️ APLICAR Y GUARDAR PROXY", style="Accent.TButton", command=self.guardar_proxy).pack(side='left', padx=5)
+        ttk.Button(btn_box, text="🚫 DESACTIVAR PROXY", style="Red.TButton", command=self.desactivar_proxy).pack(side='left', padx=5)
+        ttk.Button(btn_box, text="🔍 VERIFICAR IP DE SALIDA", style="Blue.TButton", command=self.verificar_ip_salida).pack(side='left', padx=5)
+
+        # Consulta inicial solo cuando todos los elementos de la pestaña existen
+        self.consultar_proxy_status()
+
+    def consultar_proxy_status(self):
+        """Consulta al servidor local el estado del proxy de forma resiliente."""
+        try:
+            url = f"{self.server_ip.get().rstrip('/')}/proxy/status"
+            r = requests.get(url, timeout=3)
+            if r.status_code == 200:
+                d = r.json()
+                cfg = d.get("config", {})
+                
+                if hasattr(self, 'var_proxy_enable'):
+                    self.var_proxy_enable.set(cfg.get("enabled", False))
+                    self.et_proxy_host.delete(0, tk.END)
+                    self.et_proxy_host.insert(0, cfg.get("host", ""))
+                    self.et_proxy_port.delete(0, tk.END)
+                    self.et_proxy_port.insert(0, cfg.get("port", ""))
+                    self.et_proxy_user.delete(0, tk.END)
+                    self.et_proxy_user.insert(0, cfg.get("user", ""))
+                    self.et_proxy_pass.delete(0, tk.END)
+                    self.et_proxy_pass.insert(0, cfg.get("pass", ""))
+
+                sanitized = d.get("sanitized", "Sin proxy")
+                if hasattr(self, 'lbl_proxy_status'):
+                    self.lbl_proxy_status.config(
+                        text=f"Estado Proxy Activo: {sanitized}", 
+                        foreground="#2E7D32" if cfg.get("enabled") else "black"
+                    )
+        except Exception as e:
+            if hasattr(self, 'lbl_proxy_status'):
+                self.lbl_proxy_status.config(
+                    text="Estado Proxy: Servidor local no disponible", 
+                    foreground="red"
+                )
+
+    def guardar_proxy(self):
+        payload = {
+            "enabled": self.var_proxy_enable.get(),
+            "host": self.et_proxy_host.get().strip(),
+            "port": self.et_proxy_port.get().strip(),
+            "user": self.et_proxy_user.get().strip(),
+            "pass": self.et_proxy_pass.get().strip()
+        }
+
+        if payload["enabled"] and (not payload["host"] or not payload["port"]):
+            messagebox.showwarning("Atención", "Para habilitar el proxy debes ingresar Host y Puerto.")
+            return
+
+        try:
+            url = f"{self.server_ip.get().rstrip('/')}/proxy/set"
+            r = requests.post(url, json=payload, timeout=8)
+            if r.status_code == 200:
+                messagebox.showinfo("Éxito", f"¡Proxy guardado con éxito!\n\n{r.json().get('message')}")
+                self.consultar_proxy_status()
+            else:
+                err = r.json().get('message', r.text)
+                messagebox.showerror("Error de Proxy", f"No se pudo guardar la configuración:\n{err}")
+        except Exception as e:
+            messagebox.showerror("Error de Conexión", f"Fallo al conectar con el servidor local:\n{e}")
+
+    def desactivar_proxy(self):
+        self.var_proxy_enable.set(False)
+        self.guardar_proxy()
+
+    def verificar_ip_salida(self):
+        try:
+            url = f"{self.server_ip.get().rstrip('/')}/proxy/check_ip"
+            r = requests.get(url, timeout=6)
+            if r.status_code == 200:
+                d = r.json()
+                ip = d.get("ip_detectada", "Desconocida")
+                proxy_str = d.get("sanitized_proxy", "")
+                
+                msg = (
+                    f"🌐 IP Pública del Servidor: {ip}\n\n"
+                    f"• Estado Proxy: {proxy_str}\n"
+                    f"• Usando Proxy: {'SÍ (Tráfico Enrutado)' if d.get('using_proxy') else 'NO (Conexión Directa)'}"
+                )
+                messagebox.showinfo("Diagnóstico de Red", msg)
+            else:
+                messagebox.showerror("Error", f"Error del servidor: {r.json().get('message')}")
+        except Exception as e:
+            messagebox.showerror("Error de Conexión", f"No se pudo consultar al servidor local:\n{e}")
+
     def guardar_tg(self):
-        self.config["tg_token"] = self.et_tok.get()
-        self.config["tg_chat"] = self.et_chat.get()
+        self.config["tg_token"] = self.et_tok.get().strip()
+        self.config["tg_chat"] = self.et_chat.get().strip()
         self.guardar_config()
-        messagebox.showinfo("Guardado", "Credenciales de Telegram guardadas globalmente.\nAhora aplicarán para Misiones y Planificador.")
+        messagebox.showinfo("Guardado", "Credenciales de Telegram guardadas globalmente.")
 
     # ================= PESTAÑA PLANIFICADOR =================
     def setup_tab_planner(self):
@@ -244,7 +377,7 @@ class WPlaceClient:
                 }
                 r = requests.post(f"{self.server_ip.get().rstrip('/')}/plan/set", json=payload, timeout=3)
                 if r.status_code == 200:
-                    messagebox.showinfo("Alerta Activada", "¡Plan calculated! El servidor te avisará por Telegram en el momento exacto.")
+                    messagebox.showinfo("Alerta Activada", "¡Plan calculado! El servidor te avisará por Telegram en el momento exacto.")
                 else:
                     messagebox.showerror("Error", f"El servidor devolvió el código {r.status_code}.")
             else:
@@ -253,17 +386,24 @@ class WPlaceClient:
         except ValueError:
             messagebox.showerror("Error de Datos", "Asegúrate de ingresar solo números válidos en las casillas.")
         except Exception as e:
-            messagebox.showerror("Error Crítico", f"El programa se detuvo por este error de código:\n{str(e)}")
+            messagebox.showerror("Error Crítico", f"El programa se detuvo por este error:\n{str(e)}")
 
     def cargar_config(self):
         if os.path.exists(CONFIG_FILE):
-            try: return json.load(open(CONFIG_FILE))
-            except: pass
+            try: 
+                with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception: 
+                pass
         return {"favorites": {}}
 
     def guardar_config(self):
         self.config["server_ip"] = self.server_ip.get()
-        with open(CONFIG_FILE, "w", encoding="utf-8") as f: json.dump(self.config, f, indent=4)
+        try:
+            with open(CONFIG_FILE, "w", encoding="utf-8") as f: 
+                json.dump(self.config, f, indent=4)
+        except Exception as e:
+            print(f"Error guardando configuración: {e}")
 
     def abrir_carpeta(self, path):
         path = os.path.abspath(path)
@@ -276,120 +416,181 @@ class WPlaceClient:
 
     def str_to_coords(self, text):
         match = re.search(r"Tl X:\s*(\d+).*?Tl Y:\s*(\d+).*?Px X:\s*(\d+).*?Px Y:\s*(\d+)", text)
-        if match: return (int(match.group(1)) * 1000) + int(match.group(3)), (int(match.group(2)) * 1000) + int(match.group(4))
-        try: parts = text.replace('(', '').replace(')', '').split(','); return int(parts[0]), int(parts[1])
-        except: raise ValueError("Formato incorrecto")
+        if match: 
+            return (int(match.group(1)) * 1000) + int(match.group(3)), (int(match.group(2)) * 1000) + int(match.group(4))
+        try: 
+            parts = text.replace('(', '').replace(')', '').split(',')
+            return int(parts[0]), int(parts[1])
+        except Exception: 
+            raise ValueError("Formato de coordenadas incorrecto")
 
-    # ================= PESTAÑA 1 =================
+    # ================= PESTAÑA MISIÓN (VISOR TÁCTICO) =================
     def setup_tab_new(self):
         paned = tk.PanedWindow(self.tab_new, orient=tk.HORIZONTAL, sashwidth=6, sashrelief=tk.RAISED, bg="#d0d0d0")
         paned.pack(fill='both', expand=True)
 
-        left = ttk.Frame(paned, width=400); paned.add(left, minsize=380)
+        left = ttk.Frame(paned, width=400)
+        paned.add(left, minsize=380)
         
-        l1 = ttk.LabelFrame(left, text="1. Datos de Misión"); l1.pack(fill='x', padx=5, pady=5)
-        tk.Label(l1, text="IP:").grid(row=0, column=0, sticky='e'); tk.Entry(l1, textvariable=self.server_ip, width=22).grid(row=0, column=1)
-        tk.Label(l1, text="Nombre:").grid(row=1, column=0, sticky='e'); self.task_name = tk.Entry(l1, width=22); self.task_name.grid(row=1, column=1)
+        l1 = ttk.LabelFrame(left, text="1. Datos de Misión")
+        l1.pack(fill='x', padx=5, pady=5)
+        tk.Label(l1, text="IP:").grid(row=0, column=0, sticky='e')
+        tk.Entry(l1, textvariable=self.server_ip, width=22).grid(row=0, column=1)
+        tk.Label(l1, text="Nombre:").grid(row=1, column=0, sticky='e')
+        self.task_name = tk.Entry(l1, width=22)
+        self.task_name.grid(row=1, column=1)
         
         tk.Label(l1, text="Objetivo:").grid(row=2, column=0, sticky='e')
         self.combo_source = ttk.Combobox(l1, values=["BPlace", "WPlace"], state="readonly", width=20)
         self.combo_source.current(0)
         self.combo_source.grid(row=2, column=1, pady=5)
 
-        l2 = ttk.LabelFrame(left, text="2. Coordenadas"); l2.pack(fill='x', padx=5, pady=5)
-        tk.Label(l2, text="P1:").grid(row=0, column=0); self.entry_p1 = tk.Entry(l2, width=35); self.entry_p1.grid(row=0, column=1, pady=2)
-        tk.Label(l2, text="P2:").grid(row=1, column=0); self.entry_p2 = tk.Entry(l2, width=35); self.entry_p2.grid(row=1, column=1, pady=2)
+        l2 = ttk.LabelFrame(left, text="2. Coordenadas")
+        l2.pack(fill='x', padx=5, pady=5)
+        tk.Label(l2, text="P1:").grid(row=0, column=0)
+        self.entry_p1 = tk.Entry(l2, width=35)
+        self.entry_p1.grid(row=0, column=1, pady=2)
+        tk.Label(l2, text="P2:").grid(row=1, column=0)
+        self.entry_p2 = tk.Entry(l2, width=35)
+        self.entry_p2.grid(row=1, column=1, pady=2)
         
-        f_fav = ttk.Frame(l2); f_fav.grid(row=2, column=0, columnspan=2, pady=5)
-        self.combo_favs = ttk.Combobox(f_fav, width=20, state="readonly", values=list(self.config["favorites"].keys()))
-        self.combo_favs.pack(side='left'); self.combo_favs.bind("<<ComboboxSelected>>", self.cargar_fav)
+        f_fav = ttk.Frame(l2)
+        f_fav.grid(row=2, column=0, columnspan=2, pady=5)
+        self.combo_favs = ttk.Combobox(f_fav, width=20, state="readonly", values=list(self.config.get("favorites", {}).keys()))
+        self.combo_favs.pack(side='left')
+        self.combo_favs.bind("<<ComboboxSelected>>", self.cargar_fav)
         ttk.Button(f_fav, text="💾", width=3, command=self.guardar_fav).pack(side='left', padx=2)
         ttk.Button(f_fav, text="🗑", width=3, command=self.del_fav).pack(side='left', padx=2)
 
-        l3 = ttk.LabelFrame(left, text="3. Configuración"); l3.pack(fill='x', padx=5, pady=5)
-        self.chk_time = tk.BooleanVar(value=True); self.chk_sent = tk.BooleanVar(value=False)
+        l3 = ttk.LabelFrame(left, text="3. Configuración")
+        l3.pack(fill='x', padx=5, pady=5)
+        self.chk_time = tk.BooleanVar(value=True)
+        self.chk_sent = tk.BooleanVar(value=False)
         ttk.Checkbutton(l3, text="Timelapse", variable=self.chk_time).grid(row=0, column=0, sticky='w')
         ttk.Checkbutton(l3, text="Centinela", variable=self.chk_sent).grid(row=0, column=1, sticky='w')
-        tk.Label(l3, text="Min:").grid(row=1, column=0, sticky='e'); self.sp_int = ttk.Spinbox(l3, from_=1, to=120, width=5); self.sp_int.set(1); self.sp_int.grid(row=1, column=1)
-        tk.Label(l3, text="Hrs:").grid(row=1, column=2, sticky='e'); self.sp_dur = ttk.Spinbox(l3, from_=0, to=48, width=5); self.sp_dur.set(0); self.sp_dur.grid(row=1, column=3)
-        tk.Label(l3, text="MB:").grid(row=2, column=0, sticky='e'); self.sp_mb = ttk.Spinbox(l3, from_=100, to=5000, width=5); self.sp_mb.set(1000); self.sp_mb.grid(row=2, column=1)
-        tk.Label(l3, text="Alert:").grid(row=2, column=2, sticky='e'); self.sp_sens = ttk.Spinbox(l3, from_=0.1, to=50, width=5, increment=0.1); self.sp_sens.set(5.0); self.sp_sens.grid(row=2, column=3)
+        tk.Label(l3, text="Min:").grid(row=1, column=0, sticky='e')
+        self.sp_int = ttk.Spinbox(l3, from_=1, to=120, width=5)
+        self.sp_int.set(1)
+        self.sp_int.grid(row=1, column=1)
+        tk.Label(l3, text="Hrs:").grid(row=1, column=2, sticky='e')
+        self.sp_dur = ttk.Spinbox(l3, from_=0, to=48, width=5)
+        self.sp_dur.set(0)
+        self.sp_dur.grid(row=1, column=3)
+        tk.Label(l3, text="MB:").grid(row=2, column=0, sticky='e')
+        self.sp_mb = ttk.Spinbox(l3, from_=100, to=5000, width=5)
+        self.sp_mb.set(1000)
+        self.sp_mb.grid(row=2, column=1)
+        tk.Label(l3, text="Alert:").grid(row=2, column=2, sticky='e')
+        self.sp_sens = ttk.Spinbox(l3, from_=0.1, to=50, width=5, increment=0.1)
+        self.sp_sens.set(5.0)
+        self.sp_sens.grid(row=2, column=3)
        
         ttk.Button(left, text="🚀 LANZAR TAREA", style="Accent.TButton", command=self.lanzar).pack(fill='x', padx=10, pady=15, ipady=5)
 
-        right = ttk.LabelFrame(paned, text="Visor Táctico"); paned.add(right, minsize=400, stretch="always")
-        tool = ttk.Frame(right); tool.pack(fill='x', pady=2)
+        right = ttk.LabelFrame(paned, text="Visor Táctico")
+        paned.add(right, minsize=400, stretch="always")
+        tool = ttk.Frame(right)
+        tool.pack(fill='x', pady=2)
         ttk.Button(tool, text="📷 Cargar Vista", command=self.preview).pack(side='left', padx=2)
         ttk.Button(tool, text="💾 PNG", command=self.snap_local).pack(side='left', padx=2)
         ttk.Button(tool, text="➕", width=3, command=lambda: self.zoom(1.2)).pack(side='right', padx=2)
         ttk.Button(tool, text="➖", width=3, command=lambda: self.zoom(0.8)).pack(side='right', padx=2)
 
         self.canvas = tk.Canvas(right, bg="#202020", cursor="cross")
-        sx = ttk.Scrollbar(right, orient="horizontal", command=self.canvas.xview); sy = ttk.Scrollbar(right, orient="vertical", command=self.canvas.yview)
+        sx = ttk.Scrollbar(right, orient="horizontal", command=self.canvas.xview)
+        sy = ttk.Scrollbar(right, orient="vertical", command=self.canvas.yview)
         self.canvas.configure(xscrollcommand=sx.set, yscrollcommand=sy.set)
-        sx.pack(side="bottom", fill="x"); sy.pack(side="right", fill="y"); self.canvas.pack(fill="both", expand=True)
+        sx.pack(side="bottom", fill="x")
+        sy.pack(side="right", fill="y")
+        self.canvas.pack(fill="both", expand=True)
         self.canvas.bind("<Button-1>", self.map_click)
         self.prepare_checkerboard()
 
     def prepare_checkerboard(self):
         check = Image.new("RGB", (20, 20), "#CCCCCC")
-        d = ImageDraw.Draw(check); d.rectangle([10,0,20,10], fill="#999999"); d.rectangle([0,10,10,20], fill="#999999")
+        d = ImageDraw.Draw(check)
+        d.rectangle([10,0,20,10], fill="#999999")
+        d.rectangle([0,10,10,20], fill="#999999")
         self.checker_tile = check
 
     def map_click(self, e):
         cx, cy = self.canvas.canvasx(e.x), self.canvas.canvasy(e.y)
         rx, ry = int(cx / self.zoom_level), int(cy / self.zoom_level)
         txt = self.coords_to_str(rx, ry)
-        if self.click_count % 2 == 0: self.entry_p1.delete(0, tk.END); self.entry_p1.insert(0, txt)
-        else: self.entry_p2.delete(0, tk.END); self.entry_p2.insert(0, txt)
+        if self.click_count % 2 == 0: 
+            self.entry_p1.delete(0, tk.END)
+            self.entry_p1.insert(0, txt)
+        else: 
+            self.entry_p2.delete(0, tk.END)
+            self.entry_p2.insert(0, txt)
         self.click_count += 1
-        r = 5 * self.zoom_level; self.canvas.create_oval(cx-r, cy-r, cx+r, cy+r, outline="#00FF00", width=2, tags="marker")
+        r = 5 * self.zoom_level
+        self.canvas.create_oval(cx-r, cy-r, cx+r, cy+r, outline="#00FF00", width=2, tags="marker")
 
     def preview(self):
         try:
             target_source = self.combo_source.get()
             base_url = SOURCES[target_source]
 
-            p1 = self.str_to_coords(self.entry_p1.get() or "0,0"); p2 = self.str_to_coords(self.entry_p2.get() or "1000,1000")
+            p1 = self.str_to_coords(self.entry_p1.get() or "0,0")
+            p2 = self.str_to_coords(self.entry_p2.get() or "1000,1000")
             c = {"x_start": min(p1[0], p2[0]), "y_start": min(p1[1], p2[1]), "x_end": max(p1[0], p2[0]), "y_end": max(p1[1], p2[1])}
             w, h = c['x_end']-c['x_start'], c['y_end']-c['y_start']
-            if w*h > 25000000 and not messagebox.askyesno("Alerta", "Área gigante. ¿Seguir?"): return
-            img = Image.new("RGBA", (w, h)); tx_s, tx_e = c['x_start']//1000, (c['x_end']-1)//1000; ty_s, ty_e = c['y_start']//1000, (c['y_end']-1)//1000
+            if w*h > 25000000 and not messagebox.askyesno("Alerta", "Área gigante. ¿Seguir?"): 
+                return
             
-            self.root.title(f"Descargando de {target_source}..."); self.root.update()
+            img = Image.new("RGBA", (w, h))
+            tx_s, tx_e = c['x_start']//1000, (c['x_end']-1)//1000
+            ty_s, ty_e = c['y_start']//1000, (c['y_end']-1)//1000
+            
+            self.root.title(f"Descargando de {target_source}...")
+            self.root.update()
             
             headers = {'User-Agent': 'Mozilla/5.0'}
             for tx in range(tx_s, tx_e + 1):
                 for ty in range(ty_s, ty_e + 1):
                     try: 
                         r = requests.get(f"{base_url}/{tx}/{ty}.png", headers=headers, timeout=2)
-                        if r.status_code==200: img.paste(Image.open(BytesIO(r.content)).convert("RGBA"), ((tx*1000)-c['x_start'], (ty*1000)-c['y_start']))
-                    except: pass
-            self.root.title("WPlace Commander v20.0"); self.preview_image_raw = img; self.zoom_level = 1.0; self.render_image()
-        except Exception as e: messagebox.showerror("Error", str(e))
+                        if r.status_code == 200: 
+                            img.paste(Image.open(BytesIO(r.content)).convert("RGBA"), ((tx*1000)-c['x_start'], (ty*1000)-c['y_start']))
+                    except Exception: 
+                        pass
+            self.root.title("WPlace Commander v20.0 (Clean Ops)")
+            self.preview_image_raw = img
+            self.zoom_level = 1.0
+            self.render_image()
+        except Exception as e: 
+            messagebox.showerror("Error", str(e))
 
     def zoom(self, f):
         if not self.preview_image_raw: return
-        self.zoom_level *= f; self.render_image()
+        self.zoom_level *= f
+        self.render_image()
     
     def render_image(self):
         if not self.preview_image_raw: return
-        w, h = self.preview_image_raw.size; nw, nh = int(w*self.zoom_level), int(h*self.zoom_level)
+        w, h = self.preview_image_raw.size
+        nw, nh = int(w*self.zoom_level), int(h*self.zoom_level)
         bg = Image.new("RGB", (nw, nh))
         pat = Image.new("RGB", (100, 100))
         for i in range(0, 100, 20):
-            for j in range(0, 100, 20): pat.paste(self.checker_tile, (i, j))
+            for j in range(0, 100, 20): 
+                pat.paste(self.checker_tile, (i, j))
         for i in range(0, nw, 100):
-            for j in range(0, nh, 100): bg.paste(pat, (i, j))
+            for j in range(0, nh, 100): 
+                bg.paste(pat, (i, j))
         resized = self.preview_image_raw.resize((nw, nh), Image.Resampling.NEAREST)
         bg.paste(resized, (0, 0), resized)
         self.tk_image_ref = ImageTk.PhotoImage(bg)
-        self.canvas.delete("all"); self.canvas.config(scrollregion=(0, 0, nw, nh)); self.canvas.create_image(0, 0, image=self.tk_image_ref, anchor="nw")
+        self.canvas.delete("all")
+        self.canvas.config(scrollregion=(0, 0, nw, nh))
+        self.canvas.create_image(0, 0, image=self.tk_image_ref, anchor="nw")
 
     def snap_local(self):
         if self.preview_image_raw:
             try:
-                if not os.path.exists(OUTPUT_FOLDER): os.makedirs(OUTPUT_FOLDER)
+                if not os.path.exists(OUTPUT_FOLDER): 
+                    os.makedirs(OUTPUT_FOLDER)
                 path = f"{OUTPUT_FOLDER}/snap_{datetime.now().strftime('%H%M%S')}.png"
                 p1_str = self.entry_p1.get()
                 try:
@@ -401,24 +602,47 @@ class WPlaceClient:
                     meta = PngImagePlugin.PngInfo()
                     meta.add_text("Description", json.dumps(meta_data, indent=2))
                     self.preview_image_raw.save(path, "PNG", pnginfo=meta)
-                except: self.preview_image_raw.save(path)
-                messagebox.showinfo("OK", f"Guardado:\n{path}"); self.abrir_carpeta(OUTPUT_FOLDER)
-            except Exception as e: messagebox.showerror("Error", str(e))
-        else: messagebox.showwarning("Ops", "Sin preview.")
+                except Exception: 
+                    self.preview_image_raw.save(path)
+                messagebox.showinfo("OK", f"Guardado:\n{path}")
+                self.abrir_carpeta(OUTPUT_FOLDER)
+            except Exception as e: 
+                messagebox.showerror("Error", str(e))
+        else: 
+            messagebox.showwarning("Ops", "Sin vista previa.")
 
     def guardar_fav(self):
         n = simpledialog.askstring("Nombre", "Nombre zona:")
-        if n: self.config["favorites"][n] = {"p1": self.entry_p1.get(), "p2": self.entry_p2.get()}; self.guardar_config(); self.combo_favs['values'] = list(self.config["favorites"].keys()); self.combo_favs.set(n)
+        if n: 
+            if "favorites" not in self.config: self.config["favorites"] = {}
+            self.config["favorites"][n] = {"p1": self.entry_p1.get(), "p2": self.entry_p2.get()}
+            self.guardar_config()
+            self.combo_favs['values'] = list(self.config["favorites"].keys())
+            self.combo_favs.set(n)
+
     def del_fav(self):
         n = self.combo_favs.get()
-        if n in self.config["favorites"]: del self.config["favorites"][n]; self.guardar_config(); self.combo_favs['values'] = list(self.config["favorites"].keys()); self.combo_favs.set('')
+        if n in self.config.get("favorites", {}): 
+            del self.config["favorites"][n]
+            self.guardar_config()
+            self.combo_favs['values'] = list(self.config["favorites"].keys())
+            self.combo_favs.set('')
+
     def cargar_fav(self, e):
-        name = self.combo_favs.get(); d = self.config["favorites"].get(name)
-        if d: self.entry_p1.delete(0, tk.END); self.entry_p1.insert(0, d['p1']); self.entry_p2.delete(0, tk.END); self.entry_p2.insert(0, d['p2']); self.task_name.delete(0, tk.END); self.task_name.insert(0, name)
+        name = self.combo_favs.get()
+        d = self.config.get("favorites", {}).get(name)
+        if d: 
+            self.entry_p1.delete(0, tk.END)
+            self.entry_p1.insert(0, d['p1'])
+            self.entry_p2.delete(0, tk.END)
+            self.entry_p2.insert(0, d['p2'])
+            self.task_name.delete(0, tk.END)
+            self.task_name.insert(0, name)
 
     def lanzar(self):
         try:
-            p1 = self.str_to_coords(self.entry_p1.get()); p2 = self.str_to_coords(self.entry_p2.get())
+            p1 = self.str_to_coords(self.entry_p1.get())
+            p2 = self.str_to_coords(self.entry_p2.get())
             c = {"x_start": min(p1[0], p2[0]), "y_start": min(p1[1], p2[1]), "x_end": max(p1[0], p2[0]), "y_end": max(p1[1], p2[1])}
             data = {
                 "name": self.task_name.get(), "coords": c, 
@@ -429,14 +653,25 @@ class WPlaceClient:
                 "tg_token": self.et_tok.get(), "tg_chat": self.et_chat.get()
             }
             r = requests.post(f"{self.server_ip.get().rstrip('/')}/tasks/create", json=data, timeout=3)
-            if r.status_code==200: tid = r.json()['task_id']; requests.post(f"{self.server_ip.get().rstrip('/')}/tasks/{tid}/start"); messagebox.showinfo("OK", f"Tarea iniciada (ID {tid})"); self.notebook.select(1); self.guardar_config()
-            else: messagebox.showerror("Err", r.text)
-        except Exception as e: messagebox.showerror("Err", str(e))
+            if r.status_code == 200: 
+                tid = r.json()['task_id']
+                requests.post(f"{self.server_ip.get().rstrip('/')}/tasks/{tid}/start", timeout=2)
+                messagebox.showinfo("OK", f"Tarea iniciada (ID {tid})")
+                self.notebook.select(1)
+                self.guardar_config()
+            else: 
+                messagebox.showerror("Error", r.text)
+        except Exception as e: 
+            messagebox.showerror("Error", str(e))
 
+    # ================= PESTAÑA RADAR DE TAREAS =================
     def setup_tab_manager(self):
-        f = ttk.LabelFrame(self.tab_manager, text="Estado Global"); f.pack(fill='x', padx=10, pady=5)
-        self.lbl_cpu = tk.Label(f, text="CPU: --%", fg="blue", font=("Arial", 10, "bold")); self.lbl_cpu.pack(side='left', padx=20)
-        self.lbl_ram = tk.Label(f, text="RAM: --%", fg="green", font=("Arial", 10, "bold")); self.lbl_ram.pack(side='left', padx=20)
+        f = ttk.LabelFrame(self.tab_manager, text="Estado Global")
+        f.pack(fill='x', padx=10, pady=5)
+        self.lbl_cpu = tk.Label(f, text="CPU: --%", fg="blue", font=("Arial", 10, "bold"))
+        self.lbl_cpu.pack(side='left', padx=20)
+        self.lbl_ram = tk.Label(f, text="RAM: --%", fg="green", font=("Arial", 10, "bold"))
+        self.lbl_ram.pack(side='left', padx=20)
         
         self.ctx_menu = Menu(self.root, tearoff=0)
         self.ctx_menu.add_command(label="▶ Reanudar", command=lambda: self.do_act("start"))
@@ -448,10 +683,14 @@ class WPlaceClient:
 
         cols = ("ID", "Nombre", "Fuente", "Modos", "Inicio", "Estado", "Fotos", "Restante", "Dif %")
         self.tree = ttk.Treeview(self.tab_manager, columns=cols, show='headings', selectmode='browse')
-        for c, w in zip(cols, [40, 180, 80, 120, 100, 80, 60, 80, 80]): self.tree.heading(c, text=c); self.tree.column(c, width=w, anchor="center")
-        self.tree.pack(fill='both', expand=True, padx=10, pady=5); self.tree.bind("<Button-3>", lambda e: (self.tree.selection_set(self.tree.identify_row(e.y)), self.ctx_menu.post(e.x_root, e.y_root)) if self.tree.identify_row(e.y) else None)
+        for c, w in zip(cols, [40, 180, 80, 120, 100, 80, 60, 80, 80]): 
+            self.tree.heading(c, text=c)
+            self.tree.column(c, width=w, anchor="center")
+        self.tree.pack(fill='both', expand=True, padx=10, pady=5)
+        self.tree.bind("<Button-3>", lambda e: (self.tree.selection_set(self.tree.identify_row(e.y)), self.ctx_menu.post(e.x_root, e.y_root)) if self.tree.identify_row(e.y) else None)
 
-        bf = ttk.Frame(self.tab_manager); bf.pack(fill='x', padx=10, pady=10)
+        bf = ttk.Frame(self.tab_manager)
+        bf.pack(fill='x', padx=10, pady=10)
         ttk.Button(bf, text="▶ START", style="Green.TButton", command=lambda: self.do_act("start")).pack(side='left', padx=2)
         ttk.Button(bf, text="⏸ STOP", style="Blue.TButton", command=lambda: self.do_act("stop")).pack(side='left', padx=2)
         ttk.Button(bf, text="✏️ EDITAR", style="Blue.TButton", command=self.open_edit_task_dialog).pack(side='left', padx=5) 
@@ -569,17 +808,24 @@ class WPlaceClient:
     def do_act(self, act):
         sel = self.tree.selection()
         if sel: 
-            try: requests.post(f"{self.server_ip.get().rstrip('/')}/tasks/{self.tree.item(sel[0])['values'][0]}/{act}", timeout=2); self.refresh()
-            except: pass
+            try: 
+                requests.post(f"{self.server_ip.get().rstrip('/')}/tasks/{self.tree.item(sel[0])['values'][0]}/{act}", timeout=2)
+                self.refresh()
+            except Exception: 
+                pass
             
     def do_down(self):
         sel = self.tree.selection()
-        if sel: self.descargar_zip(self.tree.item(sel[0])['values'][0])
+        if sel: 
+            self.descargar_zip(self.tree.item(sel[0])['values'][0])
 
     def monitor_loop(self):
+        """Bucle en hilo secundario para refrescar el estado global de forma asíncrona."""
         while self.running: 
-            try: self.refresh() 
-            except: pass
+            try: 
+                self.refresh() 
+            except Exception: 
+                pass
             time.sleep(2)
 
     def refresh(self):
@@ -591,14 +837,21 @@ class WPlaceClient:
                 d = r.json()
                 p = r_plan.json() if r_plan.status_code == 200 else {"active": False}
                 self.root.after(0, lambda: self.upd_ui(d, p))
-        except: 
+        except Exception: 
             pass
 
     def upd_ui(self, d, p):
-        sid = None; sel = self.tree.selection()
-        if sel: sid = self.tree.item(sel[0])['values'][0]
-        self.lbl_cpu.config(text=f"CPU: {d['system']['cpu']}%"); self.lbl_ram.config(text=f"RAM: {d['system']['ram']}%")
-        for r in self.tree.get_children(): self.tree.delete(r)
+        sid = None
+        sel = self.tree.selection()
+        if sel: 
+            sid = self.tree.item(sel[0])['values'][0]
+            
+        self.lbl_cpu.config(text=f"CPU: {d['system']['cpu']}%")
+        self.lbl_ram.config(text=f"RAM: {d['system']['ram']}%")
+        
+        for r in self.tree.get_children(): 
+            self.tree.delete(r)
+            
         for t in d['tasks']:
             m = []
             if "T" in t['mode']: m.append("Timelapse")
@@ -608,9 +861,16 @@ class WPlaceClient:
             
             source_show = t.get('source', 'WPlace') 
             
-            item = self.tree.insert("", "end", values=(t['id'], t['name'], source_show, " + ".join(m) or "Inactivo", t.get('start_str'), t['status'].upper(), t['captures'], t['restante'], t['diff_actual']), tags=(tag,))
-            if str(t['id']) == str(sid): self.tree.selection_set(item)
-        self.tree.tag_configure('run', foreground='green'); self.tree.tag_configure('err', foreground='red')
+            item = self.tree.insert("", "end", values=(
+                t['id'], t['name'], source_show, " + ".join(m) or "Inactivo", 
+                t.get('start_str'), t['status'].upper(), t['captures'], t['restante'], t['diff_actual']
+            ), tags=(tag,))
+            
+            if str(t['id']) == str(sid): 
+                self.tree.selection_set(item)
+                
+        self.tree.tag_configure('run', foreground='green')
+        self.tree.tag_configure('err', foreground='red')
 
         if hasattr(self, 'lbl_plan_res'):
             if p.get("active"):
@@ -628,12 +888,16 @@ class WPlaceClient:
                 if "ALERTA ACTIVA" in self.lbl_plan_res.cget("text") or "TIEMPO CUMPLIDO" in self.lbl_plan_res.cget("text"):
                     self.lbl_plan_res.config(text="Ingresa tus datos para generar el plan...", foreground="black")
 
+    # ================= PESTAÑA SISTEMA =================
     def setup_tab_system(self):
-        f = ttk.LabelFrame(self.tab_system, text="Gestión Global"); f.pack(fill='both', padx=20, pady=20)
+        f = ttk.LabelFrame(self.tab_system, text="Gestión Global")
+        f.pack(fill='both', padx=20, pady=20)
         ttk.Button(f, text="🔍 INSPECCIONAR CAPTURA", style="Accent.TButton", command=self.inspect_file).pack(pady=10, fill='x')
         ttk.Button(f, text="📥 DESCARGAR BACKUP COMPLETO", style="Orange.TButton", command=lambda: self.descargar_zip(None)).pack(pady=10, fill='x')
         ttk.Button(f, text="📂 ABRIR CARPETA LOCAL", style="Blue.TButton", command=lambda: self.abrir_carpeta(OUTPUT_FOLDER)).pack(pady=10, fill='x')
-        f2 = ttk.LabelFrame(self.tab_system, text="Zona de Peligro"); f2.pack(fill='x', padx=20, pady=20)
+        
+        f2 = ttk.LabelFrame(self.tab_system, text="Zona de Peligro")
+        f2.pack(fill='x', padx=20, pady=20)
         ttk.Button(f2, text="🧹 ELIMINAR TODAS LAS TAREAS", style="Warning.TButton", command=self.del_all_tasks).pack(side='left', expand=True, padx=5, pady=10)
         ttk.Button(f2, text="🔥 ELIMINAR TODAS LAS FOTOS", style="Red.TButton", command=self.del_all_photos).pack(side='right', expand=True, padx=5, pady=10)
 
@@ -641,32 +905,49 @@ class WPlaceClient:
         f = filedialog.askopenfilename(title="Seleccionar PNG", filetypes=[("PNG", "*.png")])
         if f:
             try:
-                img = Image.open(f); img.load()
+                img = Image.open(f)
+                img.load()
                 raw_data = img.info.get("Description") or img.text.get("Description")
                 if raw_data:
-                    json_data = json.loads(raw_data); formatted_json = json.dumps(json_data, indent=2)
+                    json_data = json.loads(raw_data)
+                    formatted_json = json.dumps(json_data, indent=2)
                     pyperclip.copy(formatted_json)
                     messagebox.showinfo("Inspección", f"📁 {os.path.basename(f)}\n\n📍 JSON:\n{formatted_json}\n\n✅ Copiado al portapapeles!")
-                else: messagebox.showwarning("Aviso", "Sin metadatos JSON.")
-            except Exception as e: messagebox.showerror("Error", str(e))
+                else: 
+                    messagebox.showwarning("Aviso", "Sin metadatos JSON.")
+            except Exception as e: 
+                messagebox.showerror("Error", str(e))
 
     def descargar_zip(self, tid=None):
         try:
             url = f"{self.server_ip.get().rstrip('/')}/download_zip" + (f"?task_id={tid}" if tid else "")
-            r = requests.get(url, stream=True)
-            if r.status_code==200:
-                if not os.path.exists(OUTPUT_FOLDER): os.makedirs(OUTPUT_FOLDER)
+            r = requests.get(url, stream=True, timeout=10)
+            if r.status_code == 200:
+                if not os.path.exists(OUTPUT_FOLDER): 
+                    os.makedirs(OUTPUT_FOLDER)
                 p = f"{OUTPUT_FOLDER}/{f'task_{tid}' if tid else 'full'}_{datetime.now().strftime('%H%M%S')}.zip"
                 with open(p, 'wb') as f: 
-                    for chunk in r.iter_content(8192): f.write(chunk)
-                messagebox.showinfo("OK", p); self.abrir_carpeta(OUTPUT_FOLDER)
-        except Exception as e: messagebox.showerror("Error", str(e))
+                    for chunk in r.iter_content(8192): 
+                        f.write(chunk)
+                messagebox.showinfo("OK", f"Descargado en:\n{p}")
+                self.abrir_carpeta(OUTPUT_FOLDER)
+        except Exception as e: 
+            messagebox.showerror("Error", str(e))
 
     def del_all_tasks(self): 
-        if messagebox.askyesno("CONFIRMAR", "¿Borrar tareas?"): requests.post(f"{self.server_ip.get().rstrip('/')}/delete_tasks")
+        if messagebox.askyesno("CONFIRMAR", "¿Borrar todas las tareas?"): 
+            try: requests.post(f"{self.server_ip.get().rstrip('/')}/delete_tasks", timeout=3)
+            except Exception as e: messagebox.showerror("Error", str(e))
+
     def del_all_photos(self): 
-        if messagebox.askyesno("PELIGRO", "¿Borrar fotos?"): requests.post(f"{self.server_ip.get().rstrip('/')}/delete_photos")
-    def stop_all(self): requests.post(f"{self.server_ip.get().rstrip('/')}/stop_all")
+        if messagebox.askyesno("PELIGRO", "¿Borrar todas las fotos?"): 
+            try: requests.post(f"{self.server_ip.get().rstrip('/')}/delete_photos", timeout=3)
+            except Exception as e: messagebox.showerror("Error", str(e))
+
+    def stop_all(self): 
+        try: requests.post(f"{self.server_ip.get().rstrip('/')}/stop_all", timeout=3)
+        except Exception as e: print(f"Error stop_all: {e}")
+
 
 if __name__ == "__main__":
     root = tk.Tk()

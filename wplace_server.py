@@ -2,6 +2,7 @@ import zipfile, os, json, time, threading, requests, psutil
 from collections import deque
 from flask import Flask, request, jsonify, send_file
 from task_manager import TaskManager
+from proxy_manager import proxy_mgr
 
 # 1. INICIALIZAR LA APP
 app = Flask(__name__)
@@ -177,8 +178,11 @@ def monitor_plan():
                 if time.time() >= plan['alert_time'] and not plan.get("notified", False):
                     url = f"https://api.telegram.org/bot{plan['token']}/sendMessage"
                     msg = f"🚨 *[ALERTA TÁCTICA WPLACE]* 🚨\n\nTu reserva ha alcanzado el objetivo de *{plan['px_objetivo']}* píxeles.\n\n¡Es hora de pintar!"
+                    
+                    # 👈 Inyección de Proxy Global
+                    proxies = proxy_mgr.get_requests_dict()
                     try:
-                        requests.post(url, json={"chat_id": plan['chat_id'], "text": msg, "parse_mode": "Markdown"}, timeout=10)
+                        requests.post(url, json={"chat_id": plan['chat_id'], "text": msg, "parse_mode": "Markdown"}, proxies=proxies, timeout=10)
                     except Exception as e:
                         print(f"Error enviando mensaje: {e}")
                     
@@ -188,7 +192,68 @@ def monitor_plan():
                         json.dump(plan, f)
             except Exception as e:
                 print(f"Error en monitor_plan: {e}")
-        time.sleep(5) 
+        time.sleep(5)
+
+@app.route('/proxy/check_ip', methods=['GET'])
+def check_server_ip():
+    """
+    Realiza una petición saliente usando la configuración actual del proxy 
+    y devuelve la IP pública visible que el servidor presenta en internet.
+    """
+    try:
+        # Petición saliente usando el wrapper centralizado con proxy
+        resp = proxy_mgr.request("GET", "https://api.ipify.org?format=json", timeout=5)
+        if resp.status_code == 200:
+            ip_publica = resp.json().get("ip")
+            using_proxy = bool(proxy_mgr.active_proxy)
+            
+            return jsonify({
+                "status": "ok",
+                "ip_detectada": ip_publica,
+                "using_proxy": using_proxy,
+                "sanitized_proxy": proxy_mgr.sanitize_display(),
+                "message": f"Servidor conectando a internet desde IP: {ip_publica}"
+            })
+        return jsonify({"status": "error", "message": f"Servidor externo devolvió código {resp.status_code}"}), 500
+    except Exception as e:
+        return jsonify({"status": "error", "message": f"Fallo al realizar verificación saliente: {str(e)}"}), 500
+
+
+@app.route('/proxy/status', methods=['GET'])
+def get_proxy_status():
+    return jsonify({
+        "status": "ok",
+        "config": proxy_mgr.config,
+        "sanitized": proxy_mgr.sanitize_display()
+    })
+
+@app.route('/proxy/set', methods=['POST'])
+def set_proxy_route():
+    data = request.json or {}
+    
+    # Validar primero antes de aplicar
+    if data.get("enabled"):
+        is_ok, msg = proxy_mgr.test_connection(data)
+        if not is_ok:
+            return jsonify({"status": "error", "message": f"Prueba de conexión fallida: {msg}"}), 400
+
+    if proxy_mgr.set_proxy_dict(data):
+        return jsonify({
+            "status": "ok", 
+            "message": "Configuración de proxy guardada con éxito", 
+            "sanitized": proxy_mgr.sanitize_display()
+        })
+    return jsonify({"status": "error", "message": "No se pudo escribir el archivo proxy_config.json"}), 500
+    
+    # Validar primero el funcionamiento del proxy antes de guardarlo
+    if new_url:
+        is_ok, msg = proxy_mgr.test_connection(new_url)
+        if not is_ok:
+            return jsonify({"status": "error", "message": f"Prueba de conexión fallida: {msg}"}), 400
+
+    if proxy_mgr.set_proxy(new_url):
+        return jsonify({"status": "ok", "message": "Proxy actualizado correctamente", "sanitized": proxy_mgr.sanitize_url(new_url)})
+    return jsonify({"status": "error", "message": "No se pudo guardar la configuración"}), 500
 
 if __name__ == '__main__':
     threading.Thread(target=monitor_plan, daemon=True).start()
