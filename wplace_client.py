@@ -7,6 +7,7 @@ import threading
 import time
 import json
 import os
+import sys
 import subprocess
 import platform
 import re
@@ -21,12 +22,35 @@ SOURCES = {
     "BPlace": "https://bplace.org/files/s0/tiles"
 }
 
+# =====================================================================
+# 🛠️ HELPER DE RECURSOS (Para compatibilidad con PyInstaller y .exe)
+# =====================================================================
+def get_resource_path(relative_path: str) -> str:
+    """ 
+    Obtiene la ruta absoluta de un recurso. 
+    Funciona tanto en desarrollo local como empaquetado en .exe con PyInstaller.
+    """
+    if hasattr(sys, '_MEIPASS'):
+        return os.path.join(sys._MEIPASS, relative_path)
+    return os.path.join(os.path.abspath("."), relative_path)
+
 class WPlaceClient:
     def __init__(self, root):
         self.root = root
         self.root.title("WPlace Commander v20.0 (Clean Ops)")
         self.root.geometry("1280x850")
+
+        # =====================================================================
+        # 🎨 CARGA DEFENSIVA DEL ICONO
+        # =====================================================================
+        icon_path = get_resource_path("wplace_icon.ico")
+        if os.path.exists(icon_path):
+            try:
+                self.root.iconbitmap(icon_path)
+            except Exception as e:
+                print(f"[Aviso] No se pudo asignar el icono a la ventana: {e}")
         
+        # Configuración de estilos Tkinter
         style = ttk.Style()
         style.theme_use('clam')
         style.configure("Treeview", rowheight=30, font=('Segoe UI', 9))
