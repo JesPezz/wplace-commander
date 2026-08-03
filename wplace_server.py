@@ -2,10 +2,6 @@ import zipfile, os, json, time, threading, requests, psutil
 from collections import deque
 from flask import Flask, request, jsonify, send_file
 from task_manager import TaskManager
-from sabueso_worker import jauria
-
-# Inicializamos una única instancia del Sabueso globalmente
-
 
 # 1. INICIALIZAR LA APP
 app = Flask(__name__)
@@ -14,7 +10,7 @@ manager = TaskManager()
 PLAN_FILE = "plan_state.json"
 
 # ==========================================
-# 2. RUTAS ORIGINALES DEL TASK MANAGER
+# 2. RUTAS DEL TASK MANAGER
 # ==========================================
 @app.route('/tasks/create', methods=['POST'])
 def create_task(): 
@@ -62,28 +58,24 @@ def update_task():
         if not task_id:
             return jsonify({"status": "error", "message": "ID de tarea inválido"}), 400
 
-        # 1. ACTUALIZAR EN MEMORIA (Worker activo)
-        # Esto aplica los cambios sin tener que detener ni reiniciar la tarea
+        # 1. Actualizar en memoria
         worker = manager.tasks.get(int(task_id)) or manager.tasks.get(task_id)
         if worker and hasattr(worker, 'config'):
             worker.config.update(new_config)
 
-        # 2. ACTUALIZAR EN DISCO (Modificando el JSON directamente)
+        # 2. Actualizar en disco
         manifest_path = "tasks_manifest.json"
         if os.path.exists(manifest_path):
-            with open(manifest_path, "r") as f:
+            with open(manifest_path, "r", encoding="utf-8") as f:
                 file_content = f.read().strip()
-                # Cargamos el JSON de forma segura. Si está vacío, creamos un diccionario.
                 manifest = json.loads(file_content) if file_content else {}
             
-            # Protección extra por si el JSON en disco era "null"
             if manifest is None:
                 manifest = {}
 
-            # Si el ID existe en el archivo, lo actualizamos y guardamos
             if task_id in manifest:
                 manifest[task_id].update(new_config)
-                with open(manifest_path, "w") as f:
+                with open(manifest_path, "w", encoding="utf-8") as f:
                     json.dump(manifest, f, indent=4)
                 return jsonify({"status": "ok", "message": f"Tarea #{task_id} actualizada correctamente"})
             else:
@@ -92,8 +84,6 @@ def update_task():
             return jsonify({"status": "error", "message": "El archivo tasks_manifest.json no existe"}), 404
 
     except Exception as e:
-        import traceback
-        traceback.print_exc() # Imprime el error exacto en la consola de la Pi
         return jsonify({"status": "error", "message": str(e)}), 500
 
 @app.route('/download_zip')
@@ -149,7 +139,7 @@ def set_plan():
         "expired": False,
         "notified": False
     }
-    with open(PLAN_FILE, "w") as f:
+    with open(PLAN_FILE, "w", encoding="utf-8") as f:
         json.dump(plan_data, f)
         
     return jsonify({"status": "ok"})
@@ -158,7 +148,7 @@ def set_plan():
 def get_plan_status():
     if os.path.exists(PLAN_FILE):
         try:
-            with open(PLAN_FILE, "r") as f:
+            with open(PLAN_FILE, "r", encoding="utf-8") as f:
                 plan = json.load(f)
             restante = plan['alert_time'] - time.time()
             is_expired = plan.get("expired", False) or (restante <= 0)
@@ -174,94 +164,6 @@ def get_plan_status():
             return jsonify({"active": False})
     return jsonify({"active": False})
 
-    # ==========================================
-# 5. RUTAS DEL SABUESO (RASTREADOR)
-# ==========================================
-@app.route('/sabueso/start', methods=['POST'])
-def sabueso_start():
-    try:
-        data = request.json or {}
-        target_ids = data.get('target_ids', [])
-        tile_x = data.get('tile_x', 460)
-        tile_y = data.get('tile_y', 874)
-        num_hounds = data.get('num_hounds', 8)
-        
-        sample_step = data.get('sample_step', 20)
-        amnesia_radius = data.get('amnesia_radius', 100) # 👈 Nuevo parámetro
-        swarm_size = data.get('swarm_size', 50)          # 👈 Nuevo parámetro
-
-        if not target_ids:
-            return jsonify({"status": "error", "msg": "Lista target_ids requerida"}), 400
-
-        threading.Thread(
-            target=jauria.start,
-            args=(target_ids, tile_x, tile_y, num_hounds, sample_step, amnesia_radius, swarm_size),
-            daemon=True
-        ).start()
-
-        return jsonify({"status": "ok", "msg": "Jauría táctica iniciada."})
-    except Exception as e:
-        return jsonify({"status": "error", "msg": str(e)}), 500
-
-@app.route('/sabueso/stop', methods=['POST'])
-def sabueso_stop():
-    try:
-        # Enviar orden de detención sin bloquear la petición Flask
-        threading.Thread(target=jauria.stop, daemon=True).start()
-        return jsonify({"status": "ok", "msg": "Orden de detención enviada."})
-    except Exception as e:
-        return jsonify({"status": "error", "msg": str(e)}), 500
-
-@app.route('/sabueso/reset', methods=['POST'])
-def sabueso_reset():
-    try:
-        jauria.stop()
-        
-        # 👈 Lógica de reset corregida para la nueva arquitectura
-        jauria.pending_scatter = []
-        jauria.pending_swarm = []
-        jauria.visited_set = set()
-        jauria.swarm_centers = []
-        jauria.findings = []
-        
-        with open("sabueso.log", "w", encoding="utf-8") as f:
-            f.write("=== HISTORIAL LIMPIADO ===\n")
-
-        return jsonify({"status": "ok", "msg": "Progreso reseteado correctamente."})
-    except Exception as e:
-        return jsonify({"status": "error", "msg": str(e)}), 500
-
-@app.route('/sabueso/status', methods=['GET'])
-def sabueso_status():
-    try:
-        status = jauria.get_status()
-        status["target_ids"] = getattr(jauria, "target_ids", []) or []
-        status["tile_x"] = getattr(jauria, "tile_x", 460)
-        status["tile_y"] = getattr(jauria, "tile_y", 874)
-        status["num_hounds"] = getattr(jauria, "num_hounds", 8)
-        status["sample_step"] = getattr(jauria, "sample_step", 20)
-        status["amnesia_radius"] = getattr(jauria, "amnesia_radius", 100)
-        status["swarm_size"] = getattr(jauria, "swarm_size", 50)
-        
-        return jsonify(status)
-    except Exception as e:
-        return jsonify({"running": False, "error": str(e)}), 200
-
-@app.route('/sabueso/logs', methods=['GET'])
-def sabueso_logs():
-    try:
-        log_path = "sabueso.log"
-        if not os.path.exists(log_path):
-            return jsonify({"logs": []})
-        
-        # Lee las últimas 15 líneas súper rápido sin cargar todo el archivo a RAM
-        with open(log_path, "r", encoding="utf-8") as f:
-            tail = list(deque(f, maxlen=15))
-            
-        return jsonify({"logs": tail})
-    except Exception as e:
-        return jsonify({"logs": [f"Error leyendo logs: {str(e)}"]})
-        
 # ==========================================
 # 4. HILO VIGILANTE Y ARRANQUE
 # ==========================================
@@ -269,20 +171,20 @@ def monitor_plan():
     while True:
         if os.path.exists(PLAN_FILE):
             try:
-                with open(PLAN_FILE, "r") as f:
+                with open(PLAN_FILE, "r", encoding="utf-8") as f:
                     plan = json.load(f)
                 
                 if time.time() >= plan['alert_time'] and not plan.get("notified", False):
                     url = f"https://api.telegram.org/bot{plan['token']}/sendMessage"
                     msg = f"🚨 *[ALERTA TÁCTICA WPLACE]* 🚨\n\nTu reserva ha alcanzado el objetivo de *{plan['px_objetivo']}* píxeles.\n\n¡Es hora de pintar!"
                     try:
-                        requests.post(url, json={"chat_id": plan['chat_id'], "text": msg, "parse_mode": "Markdown"})
+                        requests.post(url, json={"chat_id": plan['chat_id'], "text": msg, "parse_mode": "Markdown"}, timeout=10)
                     except Exception as e:
                         print(f"Error enviando mensaje: {e}")
                     
                     plan["notified"] = True
                     plan["expired"] = True
-                    with open(PLAN_FILE, "w") as f:
+                    with open(PLAN_FILE, "w", encoding="utf-8") as f:
                         json.dump(plan, f)
             except Exception as e:
                 print(f"Error en monitor_plan: {e}")

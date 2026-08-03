@@ -16,315 +16,15 @@ import pyperclip
 CONFIG_FILE = "client_config.json"
 OUTPUT_FOLDER = "wplace_downloads"
 
-# 🧠 DICCIONARIO DE OBJETIVOS
 SOURCES = {
     "WPlace": "https://backend.wplace.live/files/s0/tiles",
     "BPlace": "https://bplace.org/files/s0/tiles"
 }
 
-class SabuesoTab(ttk.Frame):
-    def __init__(self, parent, server_url_getter):
-        super().__init__(parent)
-        self.get_server_url = server_url_getter
-        
-        # Estado local del visor
-        self.grid_size = 50 # Matrix 50x50 para representar el Chunk
-        self.cell_pixels = {} # Guardar IDs de rectángulos del Canvas
-        self.is_monitoring = False
-        self.config_loaded = False # 👈 Bandera para sincronizar la primera vez
-        self.seen_findings = set()
-        self._build_ui()
-        
-        # Iniciar monitoreo automático desde el arranque de la app
-        self.is_monitoring = True
-        self.poll_status()
-
-    def _build_ui(self):
-        # --- PANEL IZQUIERDO: CONFIGURACIÓN Y CONTROLES ---
-        left_panel = ttk.LabelFrame(self, text=" 🐺 Configuración de la Jauría ", padding=10)
-        left_panel.pack(side=tk.LEFT, fill=tk.Y, padx=5, pady=5)
-
-        ttk.Label(left_panel, text="IDs Objetivo (separados por coma/espacio):").pack(anchor=tk.W, pady=2)
-        self.txt_targets = ttk.Entry(left_panel, width=30)
-        self.txt_targets.pack(fill=tk.X, pady=2)
-
-        coords_frame = ttk.Frame(left_panel)
-        coords_frame.pack(fill=tk.X, pady=5)
-        ttk.Label(coords_frame, text="Tile X:").grid(row=0, column=0, sticky=tk.W)
-        self.ent_tile_x = ttk.Entry(coords_frame, width=8)
-        self.ent_tile_x.grid(row=0, column=1, padx=2)
-        ttk.Label(coords_frame, text="Tile Y:").grid(row=0, column=2, sticky=tk.W)
-        self.ent_tile_y = ttk.Entry(coords_frame, width=8)
-        self.ent_tile_y.grid(row=0, column=3, padx=2)
-
-        ttk.Label(left_panel, text="Cantidad Sabuesos:").pack(anchor=tk.W, pady=(5, 0))
-        self.spn_hounds = ttk.Spinbox(left_panel, from_=1, to=16, width=5)
-        self.spn_hounds.pack(anchor=tk.W, pady=2)
-
-        # 🆕 PARÁMETROS TÁCTICOS
-        tactics_frame = ttk.LabelFrame(left_panel, text=" 🧠 Estrategia Forense ", padding=5)
-        tactics_frame.pack(fill=tk.X, pady=10)
-        
-        ttk.Label(tactics_frame, text="Salto Radar (px):").grid(row=0, column=0, sticky=tk.W, pady=2)
-        self.spn_step = ttk.Spinbox(tactics_frame, from_=5, to=100, increment=5, width=5)
-        self.spn_step.grid(row=0, column=1, sticky=tk.E)
-
-        ttk.Label(tactics_frame, text="Radio Amnesia (px):").grid(row=1, column=0, sticky=tk.W, pady=2)
-        self.spn_amnesia = ttk.Spinbox(tactics_frame, from_=10, to=300, increment=10, width=5)
-        self.spn_amnesia.grid(row=1, column=1, sticky=tk.E)
-
-        ttk.Label(tactics_frame, text="Dardos Enjambre:").grid(row=2, column=0, sticky=tk.W, pady=2)
-        self.spn_swarm = ttk.Spinbox(tactics_frame, from_=10, to=200, increment=10, width=5)
-        self.spn_swarm.grid(row=2, column=1, sticky=tk.E)
-
-        # Botones de Acción
-        btn_frame = ttk.Frame(left_panel)
-        btn_frame.pack(fill=tk.X, pady=5)
-        self.btn_start = ttk.Button(btn_frame, text="🐺 SOLTAR JAURÍA TÁCTICA", command=self.start_jauria)
-        self.btn_start.pack(fill=tk.X, pady=2)
-        self.btn_stop = ttk.Button(btn_frame, text="🛑 ABORTAR MISIÓN", command=self.stop_jauria, state=tk.DISABLED)
-        self.btn_stop.pack(fill=tk.X, pady=2)
-        self.btn_reset = ttk.Button(btn_frame, text="🔄 LIMPIAR RADAR Y LOGS", command=self.reset_jauria)
-        self.btn_reset.pack(fill=tk.X, pady=(10, 2))
-
-        # --- PANEL CENTRAL: VISOR GRAFICO RADAR (CANVAS) ---
-        center_panel = ttk.LabelFrame(self, text=" 🗺️ Radar Táctico (1000x1000) ", padding=10)
-        center_panel.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=5, pady=5)
-        self.canvas = tk.Canvas(center_panel, width=400, height=400, bg="#0a0a0a", highlightthickness=0)
-        self.canvas.pack(anchor=tk.CENTER, expand=True, pady=5)
-        self._init_radar_grid()
-
-        prog_frame = ttk.Frame(center_panel)
-        prog_frame.pack(fill=tk.X, pady=5)
-        self.lbl_progress = ttk.Label(prog_frame, text="Muestreo: 0% (0 / 2,500 Muestras)")
-        self.lbl_progress.pack(anchor=tk.W)
-        self.progress_bar = ttk.Progressbar(prog_frame, mode="determinate", maximum=100)
-        self.progress_bar.pack(fill=tk.X, pady=2)
-
-        # --- PANEL DERECHO: HALLAZGOS Y LINKS ---
-        right_panel = ttk.LabelFrame(self, text=" 🎯 Confirmaciones en Vivo ", padding=10)
-        right_panel.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=5, pady=5)
-        columns = ("time", "user", "coords", "hound")
-        self.tree = ttk.Treeview(right_panel, columns=columns, show="headings", height=12)
-        self.tree.heading("time", text="Hora")
-        self.tree.heading("user", text="Usuario")
-        self.tree.heading("coords", text="Coordenada")
-        self.tree.heading("hound", text="Sabueso")
-        self.tree.column("time", width=60)
-        self.tree.column("user", width=100)
-        self.tree.column("coords", width=90)
-        self.tree.column("hound", width=60)
-        self.tree.pack(fill=tk.BOTH, expand=True, pady=5)
-
-        self.item_links = {}
-        btn_copy = ttk.Button(right_panel, text="📋 Copiar Link Seleccionado", command=self.copy_selected_link)
-        btn_copy.pack(fill=tk.X, pady=2)
-
-        # --- TERMINAL DE LOGS EN VIVO ---
-        log_frame = ttk.LabelFrame(self, text=" 🖥️ Terminal de Sabuesos (Live) ", padding=5)
-        log_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=5, pady=5)
-        self.txt_logs = tk.Text(log_frame, height=7, bg="#0c0c0c", fg="#00ff00", font=("Consolas", 9))
-        self.txt_logs.pack(fill=tk.BOTH, expand=True, pady=2)
-
-    def _init_radar_grid(self):
-        self.canvas.delete("all")
-        self.cell_pixels.clear()
-        
-        self.grid_size = 100 # 👈 10,000 celdas
-        self.painted_cells = set() # 👈 Historial de celdas pintadas para no sobrecargar el canvas
-        
-        cell_w = 400 / self.grid_size
-        cell_h = 400 / self.grid_size
-
-        for gx in range(self.grid_size):
-            for gy in range(self.grid_size):
-                x1 = gx * cell_w
-                y1 = gy * cell_h
-                x2 = x1 + cell_w
-                y2 = y1 + cell_h
-                rect = self.canvas.create_rectangle(x1, y1, x2, y2, fill="#2b2b2b", outline="")
-                self.cell_pixels[(gx, gy)] = rect
-
-    def start_jauria(self):
-        try:
-            raw_text = self.txt_targets.get().replace("\n", ",").replace(" ", ",")
-            targets = [int(i.strip()) for i in raw_text.split(",") if i.strip().isdigit()]
-            if not targets:
-                messagebox.showerror("Error", "Debes ingresar al menos un ID numérico válido.")
-                return
-
-           payload = {
-                "target_ids": targets,
-                "tile_x": int(self.ent_tile_x.get()),
-                "tile_y": int(self.ent_tile_y.get()),
-                "num_hounds": int(self.spn_hounds.get()),
-                "sample_step": int(self.spn_step.get()),
-                "amnesia_radius": int(self.spn_amnesia.get()), # 👈 Actualizado
-                "swarm_size": int(self.spn_swarm.get())        # 👈 Actualizado
-            }
-
-        except ValueError:
-            messagebox.showerror("Error", "Revisa que todos los campos sean números válidos.")
-            return
-
-        try:
-            r = requests.post(f"{self.get_server_url()}/sabueso/start", json=payload, timeout=5)
-            if r.status_code == 200:
-                self._init_radar_grid()
-                self.btn_start.config(state=tk.DISABLED)
-                self.btn_stop.config(state=tk.NORMAL)
-                self.is_monitoring = True
-            else: messagebox.showerror("Error", r.text)
-        except Exception as e: messagebox.showerror("Error de conexión", str(e))
-
-    def stop_jauria(self):
-        url = f"{self.get_server_url()}/sabueso/stop"
-        try:
-            requests.post(url, timeout=5)
-        except:
-            pass
-        self.btn_start.config(state=tk.NORMAL)
-        self.btn_stop.config(state=tk.DISABLED)
-
-    def reset_jauria(self):
-        if not messagebox.askyesno("Confirmar Reseteo", "¿Estás seguro de borrar el avance de este Tile?\nSe iniciará el rastreo desde 0% (1,000,000 px)."):
-            return
-
-        url = f"{self.get_server_url()}/sabueso/reset"
-        try:
-            r = requests.post(url, timeout=5)
-            if r.status_code == 200:
-                self._init_radar_grid()  # Limpiar radar
-                self.painted_cells.clear()
-                self.progress_bar["value"] = 0
-                self.lbl_progress.config(text="Progreso: 0% (0 / 1,000,000 px)")
-                # Limpiar tabla de hallazgos
-                for item in self.tree.get_children():
-                    self.tree.delete(item)
-                self.item_links.clear()
-                self.seen_findings.clear()
-                messagebox.showinfo("Éxito", "Avance reseteado. Puedes presionar 'SOLTAR JAURÍA' para iniciar de nuevo.")
-            else:
-                messagebox.showerror("Error", f"No se pudo resetear: {r.text}")
-        except Exception as e:
-            messagebox.showerror("Error de conexión", str(e))
-
-    def poll_status(self):
-        try:
-            # 1. Pedir estado
-            url_status = f"{self.get_server_url()}/sabueso/status"
-            r_status = requests.get(url_status, timeout=2)
-            if r_status.status_code == 200:
-                self.update_ui(r_status.json())
-
-            # 2. Pedir logs vivos
-            url_logs = f"{self.get_server_url()}/sabueso/logs"
-            r_logs = requests.get(url_logs, timeout=2)
-            if r_logs.status_code == 200:
-                logs = r_logs.json().get("logs", [])
-                if logs:
-                    self.txt_logs.delete(1.0, tk.END)
-                    for line in logs:
-                        self.txt_logs.insert(tk.END, line)
-                    self.txt_logs.see(tk.END) # Auto-scroll
-        except Exception as ex:
-            pass
-
-        self.after(1500, self.poll_status)
-
-    def update_ui(self, data):
-        try:
-            # 0. Sincronización inicial la primera vez que se reciben datos
-            if not self.config_loaded and isinstance(data, dict):
-                self.txt_targets.delete(0, tk.END)
-                self.txt_targets.insert(0, ", ".join(str(i) for i in (data.get("target_ids") or [])))
-                self.ent_tile_x.delete(0, tk.END); self.ent_tile_x.insert(0, str(data.get("tile_x", 460)))
-                self.ent_tile_y.delete(0, tk.END); self.ent_tile_y.insert(0, str(data.get("tile_y", 874)))
-                self.spn_hounds.set(data.get("num_hounds", 8))
-
-                # Rellenar cajas de texto
-                # ids_str = ", ".join(str(i) for i in target_ids)
-                # self.txt_targets.delete(0, tk.END)
-                # self.txt_targets.insert(0, ids_str)
-
-                # self.ent_tile_x.delete(0, tk.END)
-                # self.ent_tile_x.insert(0, str(tile_x))
-
-                # self.ent_tile_y.delete(0, tk.END)
-                # self.ent_tile_y.insert(0, str(tile_y))
-
-                # self.spn_hounds.set(num_hounds)
-                # 🆕 Sincronizar UI de Estrategia
-                self.spn_step.set(data.get("sample_step", 20))
-                self.spn_amnesia.set(data.get("amnesia_radius", 100))
-                self.spn_swarm.set(data.get("swarm_size", 50))
-                self.config_loaded = True
-
-            # Actualizar estado de los botones (Soltar / Detener)
-            is_running = data.get("running", False)
-            if is_running:
-                self.btn_start.config(state=tk.DISABLED)
-                self.btn_stop.config(state=tk.NORMAL)
-            else:
-                self.btn_start.config(state=tk.NORMAL)
-                self.btn_stop.config(state=tk.DISABLED)
-
-            # 1. Actualizar barra de progreso (Ahora mide Lotes)
-            percentage = data.get("progress_percentage", 0)
-            scanned = data.get("scanned_count", 0)
-            total = data.get("total_count", 10000)
-
-            self.progress_bar["value"] = percentage
-            self.lbl_progress.config(text=f"Progreso: {percentage}% ({scanned:,} / {total:,} Lotes Completados)")
-
-            # 2. Pintar "Dardos" (Verde visible)
-            visited_sample = data.get("visited_sample", [])
-            for x, y in visited_sample:
-                gx = int(x / 10)
-                gy = int(y / 10)
-                if (gx, gy) not in self.painted_cells:
-                    rect_id = self.cell_pixels.get((gx, gy))
-                    if rect_id:
-                        self.canvas.itemconfig(rect_id, fill="#2e7d32") # Verde medio
-                        self.painted_cells.add((gx, gy))
-
-            # 3. Pintar Celdas Rojas (Sobrescribe al verde si es necesario)
-            findings = data.get("findings", [])
-            for f in findings:
-                gx = int(f["x"] / 10)
-                gy = int(f["y"] / 10)
-                rect_id = self.cell_pixels.get((gx, gy))
-                if rect_id:
-                    self.canvas.itemconfig(rect_id, fill="#ff1744")
-                    self.painted_cells.add((gx, gy))
-
-                link = f["link"]
-                item_id = f"{f['timestamp']}_{f['x']}_{f['y']}"
-                if item_id not in self.seen_findings:
-                    row_id = self.tree.insert("", "end", values=(f["timestamp"], f["user_name"], f"({f['x']},{f['y']})", f"#{f['hound_id']}"))
-                    self.item_links[row_id] = link
-                    self.seen_findings.add(item_id)
-
-        except Exception as err:
-            print(f"Error procesando update_ui: {err}")
-
-    def copy_selected_link(self):
-        selected = self.tree.selection()
-        if not selected:
-            messagebox.showinfo("Atención", "Selecciona un hallazgo de la lista.")
-            return
-        
-        row_id = selected[0]
-        link = self.item_links.get(row_id)
-        if link:
-            pyperclip.copy(link)
-            messagebox.showinfo("Copiado", f"Link copiado al portapapeles:\n{link}")
-
-
 class WPlaceClient:
     def __init__(self, root):
         self.root = root
-        self.root.title("WPlace Commander v19.0 (Hybrid Ops)")
+        self.root.title("WPlace Commander v20.0 (Clean Ops)")
         self.root.geometry("1280x850")
         
         style = ttk.Style()
@@ -337,8 +37,8 @@ class WPlaceClient:
         style.configure("Blue.TButton", font=('Segoe UI', 9), background="#E3F2FD", foreground="#1565C0")
         style.configure("Orange.TButton", font=('Segoe UI', 9), background="#FFF3E0", foreground="#EF6C00")
         style.configure("Accent.TButton", font=('Segoe UI', 10, 'bold'), background="#2196F3", foreground="white")
-        style.configure("Danger.TButton", font=('Segoe UI', 9, 'bold'), background="#F44336", foreground="white")
-        style.configure("Warning.TButton", font=('Segoe UI', 9, 'bold'), background="#FF9800", foreground="white")
+        style.configure("Danger.TButton", font=('Segoe UI', 9), bold=True, background="#F44336", foreground="white")
+        style.configure("Warning.TButton", font=('Segoe UI', 9), bold=True, background="#FF9800", foreground="white")
         
         self.config = self.cargar_config()
         self.server_ip = tk.StringVar(value=self.config.get("server_ip", "http://192.168.1.107:5000"))
@@ -357,12 +57,10 @@ class WPlaceClient:
         self.tab_system = ttk.Frame(self.notebook)
         self.tab_planner = ttk.Frame(self.notebook)
         self.tab_telegram = ttk.Frame(self.notebook) 
-        self.tab_sabueso = ttk.Frame(self.notebook)
         
         self.notebook.add(self.tab_new, text="🔭 Misión")
         self.notebook.add(self.tab_manager, text="📡 Radar de Tareas")
         self.notebook.add(self.tab_planner, text="📅 Planificador")
-        self.notebook.add(self.tab_sabueso, text="🐶 Sabueso")
         self.notebook.add(self.tab_telegram, text="📱 Telegram") 
         self.notebook.add(self.tab_system, text="⚙️ Sistema")
         
@@ -371,10 +69,6 @@ class WPlaceClient:
         self.setup_tab_planner()
         self.setup_tab_telegram()
         self.setup_tab_system()
-        
-        # --- MONTAJE DE LA PESTAÑA MODERNA DEL SABUESO ---
-        self.sabueso_tab = SabuesoTab(self.tab_sabueso, lambda: self.server_ip.get().rstrip('/'))
-        self.sabueso_tab.pack(fill='both', expand=True)
         
         self.running = True
         threading.Thread(target=self.monitor_loop, daemon=True).start()
@@ -526,7 +220,7 @@ class WPlaceClient:
                 }
                 r = requests.post(f"{self.server_ip.get().rstrip('/')}/plan/set", json=payload, timeout=3)
                 if r.status_code == 200:
-                    messagebox.showinfo("Alerta Activada", "¡Plan calculado! El servidor te avisará por Telegram en el momento exacto.")
+                    messagebox.showinfo("Alerta Activada", "¡Plan calculated! El servidor te avisará por Telegram en el momento exacto.")
                 else:
                     messagebox.showerror("Error", f"El servidor devolvió el código {r.status_code}.")
             else:
@@ -545,7 +239,7 @@ class WPlaceClient:
 
     def guardar_config(self):
         self.config["server_ip"] = self.server_ip.get()
-        with open(CONFIG_FILE, "w") as f: json.dump(self.config, f, indent=4)
+        with open(CONFIG_FILE, "w", encoding="utf-8") as f: json.dump(self.config, f, indent=4)
 
     def abrir_carpeta(self, path):
         path = os.path.abspath(path)
@@ -647,7 +341,7 @@ class WPlaceClient:
                         r = requests.get(f"{base_url}/{tx}/{ty}.png", headers=headers, timeout=2)
                         if r.status_code==200: img.paste(Image.open(BytesIO(r.content)).convert("RGBA"), ((tx*1000)-c['x_start'], (ty*1000)-c['y_start']))
                     except: pass
-            self.root.title("WPlace Commander v19.0"); self.preview_image_raw = img; self.zoom_level = 1.0; self.render_image()
+            self.root.title("WPlace Commander v20.0"); self.preview_image_raw = img; self.zoom_level = 1.0; self.render_image()
         except Exception as e: messagebox.showerror("Error", str(e))
 
     def zoom(self, f):
@@ -855,7 +549,7 @@ class WPlaceClient:
             except: pass
             
     def do_down(self):
-        sel = self.tree.selection(); 
+        sel = self.tree.selection()
         if sel: self.descargar_zip(self.tree.item(sel[0])['values'][0])
 
     def monitor_loop(self):
@@ -885,7 +579,7 @@ class WPlaceClient:
             m = []
             if "T" in t['mode']: m.append("Timelapse")
             if "S" in t['mode']: m.append("Centinela")
-            tag = 'run' if t['status']=='running' else 'stop'; 
+            tag = 'run' if t['status']=='running' else 'stop'
             if t['status']=='error': tag='err'
             
             source_show = t.get('source', 'WPlace') 

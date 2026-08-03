@@ -1,29 +1,22 @@
-# Archivos compilados de Python
+# Entornos virtuales y Python
 __pycache__/
-*.pyc
-
-# Carpetas de datos (NO subir imágenes pesadas)
-timelapse_data/
-wplace_capturas_local/
-*.zip
-*.png
-*.json
-*.txt
-
-# Archivos de estado y configuración local
-wplace_state.json
-client_config.json
-*.log
-proxy_config.json
-sabueso_state.json
-plan_state.json
-*.json.local
-
-# Entornos virtuales (si usas venv)
+*.py[cod]
+*$py.class
 venv/
 env/
-.env
 
-# Sistema operativo
-.DS_Store
-Thumbs.db
+# Datos dinámicos de imágenes y descargas
+timelapse_data/
+sentry_data/
+wplace_downloads/
+*.zip
+
+# Archivos de estado y persistencia local
+*_state.json
+plan_state.json
+tasks_manifest.json
+client_config.json
+
+# Logs y llaves
+*.log
+*.pem
