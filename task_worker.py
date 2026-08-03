@@ -2,6 +2,7 @@ import os, time, json, requests, threading
 from datetime import datetime
 from PIL import Image, PngImagePlugin
 from io import BytesIO
+import numpy as np
 
 class TaskWorker:
     def __init__(self, task_id, config, data_dir, sentry_dir):
@@ -19,6 +20,7 @@ class TaskWorker:
         self.last_saved_img = None
         self.last_saved_path = None
         self.current_diff = 0.0
+        self.current_diff_px = 0
         
         self.load_persistence()
 
@@ -105,13 +107,26 @@ class TaskWorker:
         except Exception as e: 
             self.log(f"Error TG: {e}")
 
-    def calculate_diff(self, img1, img2):
+    def calculate_diff_exact(self, img1, img2):
+        """
+        Evalúa la diferencia exacta de píxeles alterados usando operaciones matriciales vectorizadas.
+        Retorna: (porcentaje_alterado, cantidad_exacta_px)
+        """
         if img1.size != img2.size: 
-            return 100.0
-        i1, i2 = img1.convert("RGB"), img2.convert("RGB")
-        pairs = zip(i1.getdata(), i2.getdata())
-        dif = sum(abs(c1-c2) for p1,p2 in pairs for c1,c2 in zip(p1,p2))
-        return (dif / 255.0 * 100) / (i1.size[0] * i1.size[1] * 3)
+            return 100.0, 0
+            
+        arr1 = np.array(img1.convert("RGB"))
+        arr2 = np.array(img2.convert("RGB"))
+        
+        # Máscara booleana: True donde cualquier canal (R, G o B) difiera
+        diff_mask = np.any(arr1 != arr2, axis=-1)
+        
+        # Conteo absoluto de píxeles alterados
+        px_alterados = int(np.count_nonzero(diff_mask))
+        total_px = arr1.shape[0] * arr1.shape[1]
+        
+        porcentaje = (px_alterados / total_px) * 100.0 if total_px > 0 else 0.0
+        return porcentaje, px_alterados
 
     def download_area(self):
         c = self.config['coords']
@@ -177,19 +192,17 @@ class TaskWorker:
                     if self.last_img is None: 
                         self.last_img = current.copy()
                     else:
-                        diff = self.calculate_diff(self.last_img, current)
-                        self.current_diff = diff
-                        if diff >= sens:
+                        # Utilizar el nuevo método exacto
+                        diff_pct, px_alterados = self.calculate_diff_exact(self.last_img, current)
+                        self.current_diff = diff_pct
+                        self.current_diff_px = px_alterados
+                        
+                        if diff_pct >= sens:
                             path = os.path.join(self.sentry_dir, f"alert_{self.id}.png")
                             self.save_image_with_metadata(current, path)
                             
-                            # --- DIAGNÓSTICO MATEMÁTICO DE DAÑO ---
-                            c = self.config['coords']
-                            ancho = c['x_end'] - c['x_start']
-                            alto = c['y_end'] - c['y_start']
-                            px_danados = int((ancho * alto) * (diff / 100.0))
-                            
-                            diag_txt = f"📉 *Variación:* `{diff:.2f}%` (~`{px_danados} px` alterados)\n"
+                            # DIAGNÓSTICO MATEMÁTICO DIRECTO (Sin estimaciones)
+                            diag_txt = f"📉 *Variación:* `{diff_pct:.2f}%` (`{px_alterados} px` alterados detectados)\n"
                             
                             if os.path.exists("plan_state.json"):
                                 try:
@@ -200,29 +213,29 @@ class TaskWorker:
                                     px_disp = max(0, px_obj - int(restante_sec / 30))
                                     
                                     diag_txt += f"🔋 *Reserva disponible estimada:* `{px_disp} px`\n"
-                                    if px_disp >= px_danados:
+                                    if px_disp >= px_alterados:
                                         diag_txt += "⚡ *Diagnóstico:* ¡Reserva suficiente! Puedes reparar el 100% del daño inmediatamente."
                                     else:
-                                        faltan = px_danados - px_disp
+                                        faltan = px_alterados - px_disp
                                         hrs_req = round((faltan * 30) / 3600.0, 2)
-                                        diag_txt += f"⚠️ *Diagnóstico:* Te faltan `{faltan} px`. Tiempo para recuperar la reserva necesaria: `{hrs_req} hrs`."
+                                        diag_txt += f"⚠️ *Diagnóstico:* Te faltan `{faltan} px`. Tiempo para recuperar la reserva: `{hrs_req} hrs`."
                                 except Exception:
                                     pass
 
                             self.send_telegram("⚠️ *¡ATAQUE DETECTADO!*", diag_txt, path)
                             self.last_img = current.copy()
-                            self.log(f"ALERTA. Dif: {diff}%")
+                            self.log(f"ALERTA. Dif: {diff_pct:.2f}% ({px_alterados}px)")
 
                 if self.config.get('save_timelapse'):
                     should_save = False
                     if self.last_saved_img is None: 
                         should_save = True
                     else:
-                        d_t = self.calculate_diff(self.last_saved_img, current)
-                        if d_t > 0.0001: 
+                        d_t_pct, d_t_px = self.calculate_diff_exact(self.last_saved_img, current)
+                        if d_t_px > 0: # Si hay al menos 1 píxel diferente
                             should_save = True
                         else: 
-                            self.log("Sin cambios visuales.")
+                            self.log("Sin cambios visuales reales.")
 
                     if should_save:
                         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -249,6 +262,7 @@ class TaskWorker:
         self.save_persistence()
     
     def get_info(self):
+        # Actualizamos la salida para que el cliente reciba la cantidad exacta
         dur = float(self.config.get('duration_hours', 0))
         rest = "Inf"
         if dur > 0 and self.start_time_ts: 
@@ -264,5 +278,6 @@ class TaskWorker:
             "status": self.status, 
             "captures": self.captures_count,
             "restante": rest, 
-            "diff_actual": f"{self.current_diff:.4f}%"
+            "diff_actual": f"{self.current_diff:.2f}%",
+            "diff_px": getattr(self, 'current_diff_px', 0) # Nuevo campo exportado
         }

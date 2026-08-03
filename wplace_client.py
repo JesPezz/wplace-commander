@@ -264,36 +264,42 @@ class WPlaceClient:
         f_in = ttk.Frame(f)
         f_in.pack(fill='x', padx=10, pady=5)
 
-        ttk.Label(f_in, text="Píxeles Actuales:").grid(row=0, column=0, padx=10, pady=5, sticky='e')
+        ttk.Label(f_in, text="Píxeles Actuales (Reserva):").grid(row=0, column=0, padx=10, pady=5, sticky='e')
         self.pl_actuales = ttk.Entry(f_in, width=15)
         self.pl_actuales.grid(row=0, column=1, padx=10, pady=5, sticky='w')
         
         ttk.Label(f_in, text="Capacidad Máxima:").grid(row=1, column=0, padx=10, pady=5, sticky='e')
         self.pl_max = ttk.Entry(f_in, width=15)
-        self.pl_max.insert(0, "7404")
+        self.pl_max.insert(0, str(self.config.get("pl_max", "7404")))
         self.pl_max.grid(row=1, column=1, padx=10, pady=5, sticky='w')
         
         ttk.Label(f_in, text="Objetivo de Disparo (%):").grid(row=2, column=0, padx=10, pady=5, sticky='e')
         self.pl_obj = ttk.Entry(f_in, width=15)
-        self.pl_obj.insert(0, "85")
+        self.pl_obj.insert(0, str(self.config.get("pl_obj", "85")))
         self.pl_obj.grid(row=2, column=1, padx=10, pady=5, sticky='w')
         
         ttk.Label(f_in, text="Reserva de Defensa (%):").grid(row=3, column=0, padx=10, pady=5, sticky='e')
         self.pl_res = ttk.Entry(f_in, width=15)
-        self.pl_res.insert(0, "25")
+        self.pl_res.insert(0, str(self.config.get("pl_res", "25")))
         self.pl_res.grid(row=3, column=1, padx=10, pady=5, sticky='w')
+
+        # === NUEVA BARRA DE PROGRESO ===
+        self.prog_bar = ttk.Progressbar(f_in, orient='horizontal', mode='determinate', length=300)
+        self.prog_bar.grid(row=4, column=0, columnspan=2, pady=10)
+        self.lbl_prog = ttk.Label(f_in, text="Generación: -- / -- (0%)", font=('Segoe UI', 9, 'bold'))
+        self.lbl_prog.grid(row=5, column=0, columnspan=2, pady=2)
         
         ttk.Button(f, text="CALCULAR Y ACTIVAR ALERTA", style="Accent.TButton", command=self.calcular_plan).pack(pady=10)
         
-        f_diag = ttk.LabelFrame(main_f, text="🛡️ Evaluador de Daños por Ataque")
+        f_diag = ttk.LabelFrame(main_f, text="🛡️ Evaluador de Daños (Sincronizado con Radar)")
         f_diag.pack(fill='x', padx=5, pady=5)
         
         f_diag_in = ttk.Frame(f_diag)
         f_diag_in.pack(fill='x', padx=10, pady=5)
         
-        ttk.Label(f_diag_in, text="Píxeles Dañados o % de Ataque:").grid(row=0, column=0, padx=5, pady=5, sticky='e')
+        ttk.Label(f_diag_in, text="Píxeles Dañados (Total):").grid(row=0, column=0, padx=5, pady=5, sticky='e')
         self.entry_damage = ttk.Entry(f_diag_in, width=15)
-        self.entry_damage.insert(0, "2000")
+        self.entry_damage.insert(0, "0")
         self.entry_damage.grid(row=0, column=1, padx=5, pady=5, sticky='w')
         
         ttk.Button(f_diag_in, text="🔍 ANALIZAR CAPACIDAD DE REPARACIÓN", style="Blue.TButton", command=self.analizar_dano).grid(row=0, column=2, padx=15, pady=5)
@@ -340,6 +346,13 @@ class WPlaceClient:
             maximos = int(self.pl_max.get())
             obj_pct = float(self.pl_obj.get())
             res_pct = float(self.pl_res.get())
+
+            # --- NUEVO: Persistencia de datos de UI en el cliente ---
+            self.config["pl_max"] = maximos
+            self.config["pl_obj"] = obj_pct
+            self.config["pl_res"] = res_pct
+            self.guardar_config()
+            # ---------------------------------------------------------
             
             px_objetivo = int(maximos * (obj_pct / 100))
             px_reserva = int(maximos * (res_pct / 100))
@@ -841,6 +854,41 @@ class WPlaceClient:
             pass
 
     def upd_ui(self, d, p):
+        # 1. ACTUALIZAR EVALUADOR DE DAÑOS
+        total_dano_px = sum(int(t.get('diff_px', 0)) for t in d.get('tasks', []))
+        
+        # Solo sobreescribe si el usuario no tiene seleccionado el campo (UX amigable)
+        if hasattr(self, 'entry_damage') and str(self.root.focus_get()) != str(self.entry_damage):
+            self.entry_damage.delete(0, tk.END)
+            self.entry_damage.insert(0, str(total_dano_px))
+
+        # 2. ACTUALIZAR BARRA DE PROGRESO DE PÍXELES
+        if hasattr(self, 'prog_bar') and p.get("active"):
+            try:
+                maximos_str = self.pl_max.get()
+                if maximos_str.isdigit():
+                    max_px = int(maximos_str)
+                    px_objetivo = p.get('px_objetivo', 0)
+                    restante_sec = p.get('restante', 0)
+                    
+                    # Cálculo de píxeles disponibles basado en el tiempo restante
+                    # (Si faltan N segundos, se descuentan a razón de 1px / 30s)
+                    px_actuales = max(0, px_objetivo - int(restante_sec / 30))
+                    
+                    # Actualizar UI
+                    if str(self.root.focus_get()) != str(self.pl_actuales):
+                        self.pl_actuales.delete(0, tk.END)
+                        self.pl_actuales.insert(0, str(px_actuales))
+                    
+                    porcentaje = (px_actuales / max_px) * 100.0 if max_px > 0 else 0
+                    self.prog_bar['value'] = min(porcentaje, 100.0)
+                    self.lbl_prog.config(
+                        text=f"Generación: {px_actuales} / {max_px} px ({porcentaje:.1f}%)",
+                        foreground="#2E7D32" if porcentaje >= 100 else "black"
+                    )
+            except Exception:
+                pass
+
         sid = None
         sel = self.tree.selection()
         if sel: 
