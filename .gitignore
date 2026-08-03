@@ -11,11 +11,14 @@ sentry_data/
 wplace_downloads/
 *.zip
 
-# Archivos de estado y persistencia local
+# Archivos de estado, configuraciones y proxies
 *_state.json
 plan_state.json
 tasks_manifest.json
 client_config.json
+proxy_config.json
+last_config.json
+proxies.txt
 
 # Logs y llaves
 *.log
