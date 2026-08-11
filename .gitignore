@@ -27,3 +27,13 @@ proxies.txt
 # Logs y llaves
 *.log
 *.pem
+
+# Android
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/captures/
+*.apk
+*.aab
+.DS_Store
