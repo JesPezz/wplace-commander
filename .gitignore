@@ -10,6 +10,9 @@ timelapse_data/
 sentry_data/
 wplace_downloads/
 *.zip
+build/
+dist/
+
 
 # Archivos de estado, configuraciones y proxies
 *_state.json
@@ -19,7 +22,8 @@ client_config.json
 proxy_config.json
 last_config.json
 proxies.txt
-
+*.spec
+*.ico
 # Logs y llaves
 *.log
 *.pem
