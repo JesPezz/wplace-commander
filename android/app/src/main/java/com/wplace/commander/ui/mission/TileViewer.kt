@@ -34,11 +34,15 @@ data class Region(
  * Visor de tiles WPlace con zoom (pinza) y paneo.
  * Cada tile son 1000x1000 px servidos por la fuente WPlace.
  * Solo se compone la subcuadrícula de tiles que solapa la región.
+ *
+ * @param refreshKey si cambia, se fuerza la recarga de las tiles
+ *        (bustea la caché de Coil añadiendo un parámetro a la URL).
  */
 @Composable
 fun TileViewer(
     coords: Region,
     modifier: Modifier = Modifier,
+    refreshKey: Int = 0,
 ) {
     var scale by remember { mutableFloatStateOf(1f) }
     var offset by remember { mutableStateOf(Offset.Zero) }
@@ -49,6 +53,7 @@ fun TileViewer(
     val txEnd = ((coords.xEnd - 1) / tileSize).toInt()
     val tyStart = (coords.yStart / tileSize).toInt()
     val tyEnd = ((coords.yEnd - 1) / tileSize).toInt()
+    val cacheBuster = if (refreshKey > 0) "?t=$refreshKey" else ""
 
     Box(
         modifier = modifier
@@ -72,7 +77,7 @@ fun TileViewer(
                 val px = tx * tileSize - coords.xStart.toInt()
                 val py = ty * tileSize - coords.yStart.toInt()
                 AsyncImage(
-                    model = "${ApiClient.TILE_SOURCE}/$tx/$ty.png",
+                    model = "${ApiClient.TILE_SOURCE}/$tx/$ty.png$cacheBuster",
                     contentDescription = "Tile $tx,$ty",
                     contentScale = ContentScale.FillBounds,
                     modifier = Modifier

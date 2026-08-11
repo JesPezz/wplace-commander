@@ -32,6 +32,7 @@ fun MissionScreen(vm: WPlaceViewModel, modifier: Modifier = Modifier) {
     var limitMb by remember { mutableStateOf("500") }
     var alertPct by remember { mutableStateOf("90") }
     var showPreview by remember { mutableStateOf(false) }
+    var previewRefresh by remember { mutableIntStateOf(0) }
     var result by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
 
@@ -197,15 +198,27 @@ fun MissionScreen(vm: WPlaceViewModel, modifier: Modifier = Modifier) {
             }
         }
 
-        // Vista previa bajo demanda
+        // Vista previa bajo demanda (se refresca cada vez que se abre)
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Button(onClick = { showPreview = !showPreview }) {
+            Button(onClick = {
+                showPreview = !showPreview
+                if (showPreview) previewRefresh += 1
+            }) {
                 Text(if (showPreview) "Ocultar vista previa" else "📷 Vista previa")
+            }
+            if (showPreview && coords != null) {
+                TextButton(onClick = { previewRefresh += 1 }) {
+                    Text("🔄 Recargar")
+                }
             }
         }
         if (showPreview && coords != null) {
             Card(modifier = Modifier.fillMaxWidth().height(380.dp)) {
-                TileViewer(coords = coords, modifier = Modifier.fillMaxSize())
+                TileViewer(
+                    coords = coords,
+                    modifier = Modifier.fillMaxSize(),
+                    refreshKey = previewRefresh,
+                )
             }
         } else if (coords == null) {
             Text("Introduce coordenadas válidas para ver la región.",
