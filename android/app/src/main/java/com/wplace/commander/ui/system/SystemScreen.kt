@@ -13,9 +13,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.core.content.FileProvider
 import com.wplace.commander.network.ApiClient
 import com.wplace.commander.ui.WPlaceViewModel
 import com.wplace.commander.ui.theme.ThemeMode
+import com.wplace.commander.util.downloadZipToCache
+import com.wplace.commander.util.downloadZipToUri
 import java.io.File
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -26,15 +29,35 @@ fun SystemScreen(vm: WPlaceViewModel, modifier: Modifier = Modifier) {
     var ip by remember { mutableStateOf(serverIp) }
     var themeResult by remember { mutableStateOf<String?>(null) }
     var backupResult by remember { mutableStateOf<String?>(null) }
+    var backupBusy by remember { mutableStateOf(false) }
+    var cachedZip by remember { mutableStateOf<File?>(null) }
 
     val backupLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/zip")
     ) { uri: Uri? ->
         if (uri != null) {
+            backupBusy = true; backupResult = null
             vm.runApi({
-                downloadZipsToUri(context, uri)
+                // Guarda una copia local (cache) para poder abrirla y además copia al destino elegido.
+                val local = downloadZipToCache(context, taskId = null)
+                cachedZip = local
+                downloadZipToUri(context, uri, taskId = null)
                 backupResult = "Copia de seguridad generada"
-            })
+            }, onDone = { backupBusy = false })
+        }
+    }
+
+    fun openZip() {
+        val file = cachedZip ?: return
+        try {
+            val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, "application/zip")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            context.startActivity(intent)
+        } catch (_: Exception) {
+            backupResult = "No hay app para abrir el ZIP en el dispositivo"
         }
     }
 
@@ -83,11 +106,19 @@ fun SystemScreen(vm: WPlaceViewModel, modifier: Modifier = Modifier) {
         Card {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text("Respaldo", style = MaterialTheme.typography.titleMedium)
-                Button(onClick = { backupLauncher.launch("wplace_backup.zip") },
-                    modifier = Modifier.fillMaxWidth()) {
-                    Text("Exportar copia de seguridad (ZIP)")
+                Button(
+                    onClick = { backupLauncher.launch("wplace_backup.zip") },
+                    enabled = !backupBusy,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(if (backupBusy) "Descargando…" else "Exportar copia de seguridad (ZIP)")
                 }
                 backupResult?.let { Text(it, color = MaterialTheme.colorScheme.primary) }
+                if (cachedZip != null) {
+                    OutlinedButton(onClick = { openZip() }, modifier = Modifier.fillMaxWidth()) {
+                        Text("Abrir ZIP")
+                    }
+                }
             }
         }
 
@@ -108,16 +139,5 @@ fun SystemScreen(vm: WPlaceViewModel, modifier: Modifier = Modifier) {
                 }
             }
         }
-    }
-}
-
-private suspend fun downloadZipsToUri(context: android.content.Context, uri: Uri) {
-    // Genera y guarda el estado/tareas en un ZIP seleccionado por el usuario.
-    // Implementación minimalista: se descarga el ZIP de tarea si existe task_id; en el
-    // cliente Windows esto empaqueta timelapse_data/ y sentry_data/. Aquí se exporta
-    // una nota de respaldo simple para no corromper nada.
-    val body = ApiClient.api().downloadZip(taskId = null)
-    context.contentResolver.openOutputStream(uri)?.use { out ->
-        body.byteStream().use { it.copyTo(out) }
     }
 }

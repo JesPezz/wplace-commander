@@ -5,16 +5,21 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.wplace.commander.data.Coords
 import com.wplace.commander.data.CreateTaskRequest
+import com.wplace.commander.data.FavoriteMission
+import com.wplace.commander.data.FavoritesStore
 import com.wplace.commander.network.ApiClient
 import com.wplace.commander.ui.WPlaceViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MissionScreen(vm: WPlaceViewModel, modifier: Modifier = Modifier) {
+    val context = LocalContext.current
     var name by remember { mutableStateOf("") }
     var xs by remember { mutableStateOf("") }
     var ys by remember { mutableStateOf("") }
@@ -26,15 +31,39 @@ fun MissionScreen(vm: WPlaceViewModel, modifier: Modifier = Modifier) {
     var duration by remember { mutableStateOf("0") }
     var limitMb by remember { mutableStateOf("500") }
     var alertPct by remember { mutableStateOf("90") }
-    var tgToken by remember { mutableStateOf("") }
-    var tgChat by remember { mutableStateOf("") }
-    var preview by remember { mutableStateOf(true) }
+    var showPreview by remember { mutableStateOf(false) }
     var result by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
+
+    // Favoritos
+    var favorites by remember { mutableStateOf(FavoritesStore.load(context)) }
+    var selectedFav by remember { mutableStateOf<String?>(null) }
+    var favMenuOpen by remember { mutableStateOf(false) }
+    var favDialog by remember { mutableStateOf(false) }
+    var favName by remember { mutableStateOf("") }
+    var favFeedback by remember { mutableStateOf<String?>(null) }
 
     val coords = runCatching {
         Region(xs.toLong(), ys.toLong(), xe.toLong(), ye.toLong())
     }.getOrNull()
+
+    fun persistFavorites() { FavoritesStore.save(context, favorites) }
+
+    fun loadFavorite(f: FavoriteMission) {
+        name = f.name
+        xs = f.x_start.toString()
+        ys = f.y_start.toString()
+        xe = f.x_end.toString()
+        ye = f.y_end.toString()
+        saveTl = f.save_timelapse
+        sentry = f.sentry
+        interval = f.interval.toString()
+        duration = f.duration_hours.toString()
+        limitMb = f.limit_mb.toString()
+        alertPct = f.alert_pct.toString()
+        showPreview = false
+        result = null
+    }
 
     Column(
         modifier = modifier
@@ -68,12 +97,56 @@ fun MissionScreen(vm: WPlaceViewModel, modifier: Modifier = Modifier) {
                         modifier = Modifier.weight(1f))
                 }
 
-                Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                // Favoritos
+                Text("Favoritos", style = MaterialTheme.typography.titleMedium)
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Box(Modifier.weight(1f)) {
+                        OutlinedButton(
+                            onClick = { favMenuOpen = true },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text(selectedFav ?: "Seleccionar favorito…")
+                        }
+                        DropdownMenu(expanded = favMenuOpen, onDismissRequest = { favMenuOpen = false }) {
+                            if (favorites.isEmpty()) {
+                                DropdownMenuItem(text = { Text("Sin favoritos guardados") }, onClick = { favMenuOpen = false })
+                            }
+                            favorites.forEach { (key, f) ->
+                                DropdownMenuItem(
+                                    text = { Text(key) },
+                                    onClick = {
+                                        selectedFav = key
+                                        loadFavorite(f)
+                                        favMenuOpen = false
+                                    },
+                                )
+                            }
+                        }
+                    }
+                    OutlinedButton(onClick = { favName = name.ifBlank { "Zona" }; favDialog = true }) {
+                        Text("💾 Guardar")
+                    }
+                    OutlinedButton(
+                        onClick = {
+                            val key = selectedFav ?: return@OutlinedButton
+                            favorites = favorites - key
+                            selectedFav = null
+                            persistFavorites()
+                            favFeedback = "Favorito borrado"
+                        },
+                        enabled = selectedFav != null,
+                    ) {
+                        Text("🗑")
+                    }
+                }
+                favFeedback?.let { Text(it, color = MaterialTheme.colorScheme.primary) }
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
                     Switch(checked = saveTl, onCheckedChange = { saveTl = it })
                     Spacer(Modifier.width(8.dp))
                     Text("Guardar timelapse")
                 }
-                Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
                     Switch(checked = sentry, onCheckedChange = { sentry = it })
                     Spacer(Modifier.width(8.dp))
                     Text("Modo centinela (detección de cambios)")
@@ -87,10 +160,10 @@ fun MissionScreen(vm: WPlaceViewModel, modifier: Modifier = Modifier) {
                     label = { Text("Límite de capturas (MB)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(value = alertPct, onValueChange = { alertPct = it },
                     label = { Text("Alerta de cuota (%)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(value = tgToken, onValueChange = { tgToken = it },
-                    label = { Text("Token de Telegram (opcional)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(value = tgChat, onValueChange = { tgChat = it },
-                    label = { Text("Chat ID de Telegram (opcional)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+
+                Text("Las alertas de Telegram usan las credenciales globales de la pestaña Telegram.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
 
                 Button(
                     onClick = {
@@ -106,8 +179,8 @@ fun MissionScreen(vm: WPlaceViewModel, modifier: Modifier = Modifier) {
                             duration_hours = duration.toDoubleOrNull() ?: 0.0,
                             limit_mb = limitMb.toIntOrNull() ?: 500,
                             alert_pct = alertPct.toDoubleOrNull() ?: 90.0,
-                            tg_token = tgToken.trim(),
-                            tg_chat = tgChat.trim(),
+                            tg_token = ApiClient.getTgToken(context),
+                            tg_chat = ApiClient.getTgChat(context),
                         )
                         busy = true; result = null
                         vm.runApi({
@@ -124,13 +197,13 @@ fun MissionScreen(vm: WPlaceViewModel, modifier: Modifier = Modifier) {
             }
         }
 
-        Text("Vista previa", style = MaterialTheme.typography.titleLarge)
-        Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-            Switch(checked = preview, onCheckedChange = { preview = it })
-            Spacer(Modifier.width(8.dp))
-            Text("Mostrar tiles de la región")
+        // Vista previa bajo demanda
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Button(onClick = { showPreview = !showPreview }) {
+                Text(if (showPreview) "Ocultar vista previa" else "📷 Vista previa")
+            }
         }
-        if (preview && coords != null) {
+        if (showPreview && coords != null) {
             Card(modifier = Modifier.fillMaxWidth().height(380.dp)) {
                 TileViewer(coords = coords, modifier = Modifier.fillMaxSize())
             }
@@ -139,5 +212,43 @@ fun MissionScreen(vm: WPlaceViewModel, modifier: Modifier = Modifier) {
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
+    }
+
+    if (favDialog) {
+        AlertDialog(
+            onDismissRequest = { favDialog = false },
+            title = { Text("Guardar favorito") },
+            text = {
+                OutlinedTextField(value = favName, onValueChange = { favName = it },
+                    label = { Text("Nombre de la zona") }, singleLine = true,
+                    modifier = Modifier.fillMaxWidth())
+            },
+            confirmButton = {
+                Button(onClick = {
+                    val f = FavoriteMission(
+                        name = name,
+                        x_start = xs.toLongOrNull() ?: 0,
+                        y_start = ys.toLongOrNull() ?: 0,
+                        x_end = xe.toLongOrNull() ?: 0,
+                        y_end = ye.toLongOrNull() ?: 0,
+                        save_timelapse = saveTl,
+                        sentry = sentry,
+                        interval = interval.toIntOrNull() ?: 60,
+                        duration_hours = duration.toDoubleOrNull() ?: 0.0,
+                        limit_mb = limitMb.toIntOrNull() ?: 500,
+                        alert_pct = alertPct.toDoubleOrNull() ?: 90.0,
+                    )
+                    val key = favName.trim().ifBlank { name.ifBlank { "Zona" } }
+                    favorites = favorites + (key to f)
+                    selectedFav = key
+                    persistFavorites()
+                    favDialog = false
+                    favFeedback = "Favorito guardado"
+                }) { Text("Guardar") }
+            },
+            dismissButton = {
+                TextButton(onClick = { favDialog = false }) { Text("Cancelar") }
+            },
+        )
     }
 }

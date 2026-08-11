@@ -38,26 +38,32 @@ private fun TelegramTab(api: com.wplace.commander.network.WPlaceApi, vm: WPlaceV
     var chat by remember { mutableStateOf("") }
     var status by remember { mutableStateOf("") }
 
+    val context = androidx.compose.ui.platform.LocalContext.current
+
+    LaunchedEffect(Unit) {
+        token = ApiClient.getTgToken(context)
+        chat = ApiClient.getTgChat(context)
+    }
+
     Column(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Text("Telegram", style = MaterialTheme.typography.titleLarge)
-        Text("Credenciales para recibir alertas de cambio en las misiones.",
+        Text("Credenciales globales: valen para todas las tareas, misiones y el planificador.",
             style = MaterialTheme.typography.bodyMedium)
         OutlinedTextField(value = token, onValueChange = { token = it },
             label = { Text("Bot token") }, singleLine = true, modifier = Modifier.fillMaxWidth())
         OutlinedTextField(value = chat, onValueChange = { chat = it },
-            label = { Text("Chat ID (opcional)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            label = { Text("Chat ID") }, singleLine = true, modifier = Modifier.fillMaxWidth())
         Button(onClick = {
-            val prefs = ApiClient.prefs(vm.appCtx())
-            prefs.edit().putString("tg_token", token.trim()).putString("tg_chat", chat.trim()).apply()
-            status = "Credenciales guardadas localmente"
+            ApiClient.saveTgCreds(context, token, chat)
+            status = "Credenciales globales guardadas"
         }, modifier = Modifier.fillMaxWidth()) {
-            Text("Guardar credenciales")
+            Text("Guardar credenciales globales")
         }
         status?.let { Text(it, color = MaterialTheme.colorScheme.primary) }
-        Text("Las credenciales por tarea se configuran en Misión (token en la tabla de secretos).",
+        Text("Estas credenciales se usarán automáticamente al crear misiones y activar el planificador.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant)
     }

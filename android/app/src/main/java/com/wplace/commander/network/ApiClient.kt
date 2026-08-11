@@ -65,6 +65,20 @@ object ApiClient {
     /** Prefs compartidas para credenciales y configuración simple. */
     fun prefs(context: Context): SharedPreferences =
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+
+    /** Credenciales de Telegram globales (pestaña Telegram, valen para todas las misiones). */
+    fun getTgToken(context: Context): String =
+        prefs(context).getString("tg_token", "") ?: ""
+
+    fun getTgChat(context: Context): String =
+        prefs(context).getString("tg_chat", "") ?: ""
+
+    fun saveTgCreds(context: Context, token: String, chat: String) {
+        prefs(context).edit()
+            .putString("tg_token", token.trim())
+            .putString("tg_chat", chat.trim())
+            .apply()
+    }
 }
 
 /** Provee un Context global (se inicializa en MainActivity/Application). */

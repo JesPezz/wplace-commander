@@ -6,52 +6,185 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.wplace.commander.data.PlanSetRequest
 import com.wplace.commander.network.ApiClient
 import com.wplace.commander.ui.WPlaceViewModel
+import kotlinx.coroutines.delay
+import java.util.Calendar
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PlannerScreen(vm: WPlaceViewModel, modifier: Modifier = Modifier) {
     val api = ApiClient.api()
-    var segundos by remember { mutableStateOf("") }
-    var pxObjetivo by remember { mutableStateOf("") }
-    var token by remember { mutableStateOf("") }
-    var chatId by remember { mutableStateOf("") }
+    val context = LocalContext.current
+    val prefs = ApiClient.prefs(context)
+
+    var actuales by remember { mutableStateOf("") }
+    var maximos by remember { mutableStateOf(prefs.getString("pl_max", "7404") ?: "7404") }
+    var objPct by remember { mutableStateOf(prefs.getString("pl_obj", "85") ?: "85") }
+    var resPct by remember { mutableStateOf(prefs.getString("pl_res", "25") ?: "25") }
     var result by remember { mutableStateOf<String?>(null) }
+    var warning by remember { mutableStateOf<String?>(null) }
+    var busy by remember { mutableStateOf(false) }
+
+    // Estado del plan activo en el servidor (progreso + cuenta regresiva)
+    var planActive by remember { mutableStateOf(false) }
+    var planExpired by remember { mutableStateOf(false) }
+    var planRestante by remember { mutableStateOf(0L) }
+    var planPxObjetivo by remember { mutableStateOf(0) }
+    var planConfigTxt by remember { mutableStateOf("") }
+
+    LaunchedEffect(Unit) {
+        while (true) {
+            try {
+                val p = api.planStatus()
+                planActive = p.active
+                planExpired = p.expired
+                planRestante = p.restante.toLong()
+                planPxObjetivo = p.px_objetivo
+                planConfigTxt = p.config_txt
+            } catch (_: Exception) {}
+            delay(3000)
+        }
+    }
+
+    val maxPx = maximos.toDoubleOrNull() ?: 0.0
+    val pxActualesCalc = if (planActive && !planExpired)
+        maxOf(0, planPxObjetivo - (planRestante / 30).toInt())
+    else 0
+    val progress = if (maxPx > 0) (pxActualesCalc / maxPx).toFloat().coerceIn(0f, 1f) else 0f
 
     Column(
         modifier = modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Text("Planificador", style = MaterialTheme.typography.titleLarge)
-        Text("Configura la cuota y el control de descarga del servidor.",
+        Text("Calcula la alerta táctica de la reserva y su cronograma.",
             style = MaterialTheme.typography.bodyMedium)
 
         Card {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                OutlinedTextField(value = segundos, onValueChange = { segundos = it },
-                    label = { Text("Segundos de espera") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(value = pxObjetivo, onValueChange = { pxObjetivo = it },
-                    label = { Text("Píxeles objetivo") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(value = token, onValueChange = { token = it },
-                    label = { Text("Token de Telegram") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(value = chatId, onValueChange = { chatId = it },
-                    label = { Text("Chat ID") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                Button(onClick = {
-                    result = null
-                    val req = PlanSetRequest(
-                        segundos_espera = segundos.toLongOrNull() ?: 0,
-                        px_objetivo = pxObjetivo.toIntOrNull() ?: 0,
-                        token = token.trim(),
-                        chat_id = chatId.trim(),
-                    )
-                    vm.runApi({ api.planSet(req) }) { result = "Planificación guardada" }
-                }, modifier = Modifier.fillMaxWidth()) {
-                    Text("Guardar planificación")
+                OutlinedTextField(value = actuales, onValueChange = { actuales = it },
+                    label = { Text("Píxeles Actuales (Reserva)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(value = maximos, onValueChange = { maximos = it },
+                    label = { Text("Capacidad Máxima") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(value = objPct, onValueChange = { objPct = it },
+                    label = { Text("Objetivo de Disparo (%)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(value = resPct, onValueChange = { resPct = it },
+                    label = { Text("Reserva de Defensa (%)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+
+                Button(
+                    onClick = {
+                        result = null; warning = null; busy = true
+                        val actualesV = actuales.toIntOrNull()
+                        val maximosV = maximos.toIntOrNull()
+                        val objV = objPct.toFloatOrNull()
+                        val resV = resPct.toFloatOrNull()
+                        if (actualesV == null || maximosV == null || maximosV <= 0 || objV == null || resV == null) {
+                            warning = "Revisa los valores: deben ser numéricos y válidos."
+                            busy = false
+                            return@Button
+                        }
+                        // Persistencia de la configuración de la UI
+                        prefs.edit().putString("pl_max", maximos.toString())
+                            .putString("pl_obj", objPct.toString())
+                            .putString("pl_res", resPct.toString()).apply()
+
+                        val pxObjetivo = (maximosV * (objV / 100f)).toInt()
+                        val pxReserva = (maximosV * (resV / 100f)).toInt()
+                        val pxGastar = pxObjetivo - pxReserva
+                        val pxFaltantes = maxOf(0, pxObjetivo - actualesV)
+                        val segundosEspera = pxFaltantes * 30L
+                        val cal = Calendar.getInstance().apply { timeInMillis = System.currentTimeMillis() + segundosEspera * 1000 }
+                        val fecha = "%02d/%02d/%04d a las %02d:%02d:%02d".format(
+                            cal.get(Calendar.DAY_OF_MONTH), cal.get(Calendar.MONTH) + 1, cal.get(Calendar.YEAR),
+                            cal.get(Calendar.HOUR_OF_DAY), cal.get(Calendar.MINUTE), cal.get(Calendar.SECOND))
+                        val horasMargen = ((maximosV - pxObjetivo) * 30) / 3600.0
+
+                        val txt = buildString {
+                            append("🎯 Objetivo a alcanzar: $pxObjetivo px (${objV.toInt()}%)\n")
+                            append("🛡️ Reserva a dejar: $pxReserva px (${resV.toInt()}%)\n")
+                            append("🖌️ Píxeles a pintar por sesión: $pxGastar px\n\n")
+                            append("⏱️ Tiempo de recarga estimado: ${"%.2f".format(segundosEspera / 3600.0)} horas\n")
+                            append("⏰ Hora de notificación: $fecha\n")
+                            append("🔋 Margen de inactividad antes de perder píxeles: ${"%.2f".format(horasMargen)} horas")
+                        }
+                        result = txt
+
+                        val token = ApiClient.getTgToken(context)
+                        val chatId = ApiClient.getTgChat(context)
+                        if (token.isBlank() || chatId.isBlank()) {
+                            warning = "Configura las credenciales globales en la pestaña Telegram para recibir la alerta."
+                            busy = false
+                            return@Button
+                        }
+                        if (pxFaltantes > 0) {
+                            vm.runApi({
+                                val req = PlanSetRequest(
+                                    segundos_espera = segundosEspera,
+                                    px_objetivo = pxObjetivo,
+                                    token = token,
+                                    chat_id = chatId,
+                                    config_txt = txt,
+                                )
+                                api.planSet(req)
+                                result = "$txt\n\n✅ Alerta activada en el servidor."
+                            }, onDone = { busy = false })
+                        } else {
+                            warning = "Ya tienes suficientes píxeles: el objetivo ya está alcanzado."
+                            busy = false
+                        }
+                    },
+                    enabled = !busy,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(if (busy) "Calculando…" else "CALCULAR Y ACTIVAR ALERTA")
                 }
-                result?.let { Text(it, color = MaterialTheme.colorScheme.primary) }
+                warning?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                result?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+            }
+        }
+
+        // Barra de progreso y cuenta regresiva
+        if (planActive) {
+            Card {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("Progreso de generación", style = MaterialTheme.typography.titleMedium)
+                    LinearProgressIndicator(
+                        progress = { progress },
+                        modifier = Modifier.fillMaxWidth().height(10.dp),
+                    )
+                    val pct = if (maxPx > 0) (pxActualesCalc / maxPx * 100.0) else 0.0
+                    Text("Generación: $pxActualesCalc / ${maxPx.toInt()} px (${"%.1f".format(pct)}%)",
+                        style = MaterialTheme.typography.bodyMedium)
+                    if (planExpired) {
+                        Text("✅ ¡TIEMPO CUMPLIDO - LISTO PARA PINTAR!",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.primary)
+                    } else {
+                        val hrs = planRestante / 3600
+                        val mins = (planRestante % 3600) / 60
+                        Text("⏳ Cuenta regresiva: faltan ${hrs}h ${mins}m",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.primary)
+                    }
+                }
+            }
+        }
+
+        // Resultados y cronograma (sincronizado con el servidor)
+        Card {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Resultados y Cronograma", style = MaterialTheme.typography.titleMedium)
+                val txt = if (planActive && planConfigTxt.isNotBlank()) planConfigTxt else result
+                Text(
+                    txt ?: "Ingresa tus datos para generar el plan…",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (planActive) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         }
     }

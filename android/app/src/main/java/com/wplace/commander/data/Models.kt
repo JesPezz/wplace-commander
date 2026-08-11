@@ -1,7 +1,9 @@
 package com.wplace.commander.data
 
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 
 @Serializable
 data class Coords(
@@ -70,7 +72,7 @@ data class TaskInfo(
 @Serializable
 data class UpdateTaskRequest(
     val id: Int,
-    val config: Map<String, Any> = emptyMap(),
+    val config: Map<String, JsonElement> = emptyMap(),
 )
 
 @Serializable
@@ -121,3 +123,31 @@ data class PlanSetRequest(
     val chat_id: String,
     val config_txt: String = "",
 )
+
+@Serializable
+data class FavoriteMission(
+    val name: String = "",
+    val x_start: Long = 0,
+    val y_start: Long = 0,
+    val x_end: Long = 0,
+    val y_end: Long = 0,
+    val save_timelapse: Boolean = true,
+    val sentry: Boolean = false,
+    val interval: Int = 60,
+    val duration_hours: Double = 0.0,
+    val limit_mb: Int = 500,
+    val alert_pct: Double = 90.0,
+)
+
+/** Convierte un mapa simple de valores en un mapa de JsonElement para /tasks/update. */
+fun buildConfigJson(map: Map<String, Any>): Map<String, JsonElement> =
+    map.mapValues { (_, v) ->
+        when (v) {
+            is String -> JsonPrimitive(v)
+            is Int -> JsonPrimitive(v)
+            is Long -> JsonPrimitive(v)
+            is Double -> JsonPrimitive(v)
+            is Boolean -> JsonPrimitive(v)
+            else -> JsonPrimitive(v.toString())
+        }
+    }

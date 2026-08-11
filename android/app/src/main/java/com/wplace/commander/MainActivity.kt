@@ -10,6 +10,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.unit.dp
 import com.wplace.commander.network.AppContextProvider
 import com.wplace.commander.ui.WPlaceViewModel
 import com.wplace.commander.ui.mission.MissionScreen
@@ -22,6 +23,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.compose.runtime.collectAsState
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -48,6 +50,7 @@ data class NavItem(val label: String, val icon: ImageVector, val screen: Int)
 fun AppRoot(vm: WPlaceViewModel) {
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val selected by vm.selectedTab.collectAsState()
+    val scope = rememberCoroutineScope()
 
     LaunchedEffect(Unit) { vm.startPolling() }
 
@@ -73,7 +76,7 @@ fun AppRoot(vm: WPlaceViewModel) {
                         selected = selected == item.screen,
                         onClick = {
                             vm.setTab(item.screen)
-                            drawerState.close()
+                            scope.launch { drawerState.close() }
                         },
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
                     )
@@ -86,7 +89,7 @@ fun AppRoot(vm: WPlaceViewModel) {
                 TopAppBar(
                     title = { Text(items.firstOrNull { it.screen == selected }?.label ?: "") },
                     navigationIcon = {
-                        IconButton(onClick = { drawerState.open() }) {
+                        IconButton(onClick = { scope.launch { drawerState.open() } }) {
                             Icon(Icons.Filled.Menu, contentDescription = "Abrir menú")
                         }
                     },
