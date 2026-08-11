@@ -1,4 +1,4 @@
-import zipfile, os, json, time, threading, requests, psutil
+import zipfile, os, json, time, threading, re, requests, psutil
 from collections import deque
 from flask import Flask, request, jsonify, send_file
 from task_manager import TaskManager
@@ -37,7 +37,8 @@ def get_status():
     tasks_info = []
     for t_id, worker in manager.tasks.items():
         info = worker.get_info()
-        info['config'] = worker.config
+        # No exponer credenciales (tg_token/tg_chat) por la API
+        info['config'] = {k: v for k, v in worker.config.items() if k not in ("tg_token", "tg_chat")}
         tasks_info.append(info)
         
     cpu = psutil.cpu_percent()
@@ -90,6 +91,8 @@ def update_task():
 @app.route('/download_zip')
 def download():
     tid_req = request.args.get('task_id')
+    if tid_req is not None and not re.fullmatch(r"\d+", tid_req):
+        return jsonify({"status": "error", "message": "task_id inválido"}), 400
     zip_name = f"data_task_{tid_req}.zip" if tid_req else "full_backup.zip"
     
     with zipfile.ZipFile(zip_name, 'w') as z:
@@ -223,14 +226,19 @@ def check_server_ip():
 def get_proxy_status():
     return jsonify({
         "status": "ok",
-        "config": proxy_mgr.config,
+        "config": {k: v for k, v in proxy_mgr.config.items() if k != "pass"},
+        "has_pass": bool(proxy_mgr.config.get("pass")),
         "sanitized": proxy_mgr.sanitize_display()
     })
 
 @app.route('/proxy/set', methods=['POST'])
 def set_proxy_route():
     data = request.json or {}
-    
+
+    # Conservar la contraseña existente si no se envía una nueva (nunca viaja por la API)
+    if not data.get("pass") and proxy_mgr.config.get("pass"):
+        data["pass"] = proxy_mgr.config["pass"]
+
     # Validar primero antes de aplicar
     if data.get("enabled"):
         is_ok, msg = proxy_mgr.test_connection(data)
@@ -244,16 +252,6 @@ def set_proxy_route():
             "sanitized": proxy_mgr.sanitize_display()
         })
     return jsonify({"status": "error", "message": "No se pudo escribir el archivo proxy_config.json"}), 500
-    
-    # Validar primero el funcionamiento del proxy antes de guardarlo
-    if new_url:
-        is_ok, msg = proxy_mgr.test_connection(new_url)
-        if not is_ok:
-            return jsonify({"status": "error", "message": f"Prueba de conexión fallida: {msg}"}), 400
-
-    if proxy_mgr.set_proxy(new_url):
-        return jsonify({"status": "ok", "message": "Proxy actualizado correctamente", "sanitized": proxy_mgr.sanitize_url(new_url)})
-    return jsonify({"status": "error", "message": "No se pudo guardar la configuración"}), 500
 
 if __name__ == '__main__':
     threading.Thread(target=monitor_plan, daemon=True).start()

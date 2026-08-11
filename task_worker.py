@@ -1,8 +1,8 @@
 import os, time, json, requests, threading
 from datetime import datetime
 from PIL import Image, PngImagePlugin
-from io import BytesIO
 import numpy as np
+import tiles
 
 class TaskWorker:
     def __init__(self, task_id, config, data_dir, sentry_dir):
@@ -10,6 +10,8 @@ class TaskWorker:
         self.config = config
         self.data_dir = data_dir
         self.sentry_dir = sentry_dir
+        if self.config.get('source', 'WPlace') != 'WPlace':
+            self.config['source'] = 'WPlace'
         
         self.running = False
         self.paused = False
@@ -129,29 +131,7 @@ class TaskWorker:
         return porcentaje, px_alterados
 
     def download_area(self):
-        c = self.config['coords']
-        source_target = self.config.get('source', 'WPlace')
-        if source_target == 'BPlace':
-            base_url = "https://bplace.org/files/s0/tiles"
-        else:
-            base_url = "https://backend.wplace.live/files/s0/tiles"
-
-        w, h = c['x_end']-c['x_start'], c['y_end']-c['y_start']
-        full_img = Image.new("RGBA", (w, h))
-        tx_s, tx_e = c['x_start']//1000, (c['x_end']-1)//1000
-        ty_s, ty_e = c['y_start']//1000, (c['y_end']-1)//1000
-        for tx in range(tx_s, tx_e + 1):
-            for ty in range(ty_s, ty_e + 1):
-                url = f"{base_url}/{tx}/{ty}.png"
-                try:
-                    headers = {'User-Agent': 'Mozilla/5.0'}
-                    r = requests.get(url, headers=headers, timeout=10)
-                    if r.status_code == 200:
-                        tile = Image.open(BytesIO(r.content)).convert("RGBA")
-                        full_img.paste(tile, ((tx*1000)-c['x_start'], (ty*1000)-c['y_start']), tile)
-                except: 
-                    pass
-        return full_img
+        return tiles.download_area(self.config['coords'], self.config.get('source', 'WPlace'))
 
     def run_loop(self):
         self.running = True
@@ -186,8 +166,10 @@ class TaskWorker:
 
                 self.log("Descargando...")
                 current = self.download_area()
+                if current is None:
+                    self.log("Región inválida o excesiva; se omite este ciclo")
 
-                if self.config.get('sentry'):
+                if current is not None and self.config.get('sentry'):
                     sens = float(self.config.get('alert_pct', 5.0))
                     if self.last_img is None: 
                         self.last_img = current.copy()
@@ -226,7 +208,7 @@ class TaskWorker:
                             self.last_img = current.copy()
                             self.log(f"ALERTA. Dif: {diff_pct:.2f}% ({px_alterados}px)")
 
-                if self.config.get('save_timelapse'):
+                if current is not None and self.config.get('save_timelapse'):
                     should_save = False
                     if self.last_saved_img is None: 
                         should_save = True

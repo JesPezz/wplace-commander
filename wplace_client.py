@@ -7,21 +7,18 @@ import threading
 import platform
 import subprocess
 from datetime import datetime, timedelta
-from io import BytesIO
 
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog, Menu, filedialog
 from PIL import Image, ImageTk, ImageDraw, PngImagePlugin
 import requests
 import pyperclip
+import tiles
+import fluent
 
 CONFIG_FILE = "client_config.json"
 OUTPUT_FOLDER = "wplace_downloads"
-
-SOURCES = {
-    "WPlace": "https://backend.wplace.live/files/s0/tiles",
-    "BPlace": "https://bplace.org/files/s0/tiles"
-}
+DEFAULT_TOUCH = fluent.DEFAULT_TOUCH
 
 # =====================================================================
 # 🛠️ HELPER DE RECURSOS (Para compatibilidad con PyInstaller y .exe)
@@ -39,12 +36,25 @@ def get_resource_path(relative_path: str) -> str:
 class WPlaceClient:
     def __init__(self, root):
         self.root = root
-        self.root.title("WPlace Commander v20.0 (Clean Ops)")
+        fluent.enable_dpi_awareness()
+        self.root.title("WPlace Commander")
         self.root.geometry("1280x850")
-        
+        self.root.minsize(1000, 640)
+
         # Cargar configuración persistente
         self.config = self.cargar_config()
-        
+
+        # --- Tema Fluent dinámico (claro/oscuro/alto contraste) ---
+        self.theme = fluent.FluentTheme(mode=self.config.get("theme", "auto"))
+        self.tk_style = ttk.Style(self.root)
+        self.apply_theme()
+
+        # State de navegación lateral (NavigationView)
+        self.nav_expanded = True
+        self.nav_buttons = {}
+        self.nav_frames = {}
+        self.current_view = None
+
         # Variables de estado
         self.server_ip = tk.StringVar(value=self.config.get("server_ip", "http://192.168.1.107:5000"))
         self.preview_image_raw = None
@@ -60,45 +70,146 @@ class WPlaceClient:
             except Exception as e:
                 print(f"[Aviso] No se pudo asignar el icono: {e}")
 
-        # --- Configuración de Estilos ---
-        style = ttk.Style()
-        style.theme_use('clam')
-        style.configure("Accent.TButton", font=('Segoe UI', 9, 'bold'), foreground="white", background="#007ACC")
-        style.configure("Green.TButton", font=('Segoe UI', 9, 'bold'), foreground="white", background="#2E7D32")
-        style.configure("Blue.TButton", font=('Segoe UI', 9, 'bold'), foreground="white", background="#1565C0")
-        style.configure("Orange.TButton", font=('Segoe UI', 9, 'bold'), foreground="white", background="#E65100")
-        style.configure("Red.TButton", font=('Segoe UI', 9, 'bold'), foreground="white", background="#C62828")
-        style.configure("Warning.TButton", font=('Segoe UI', 9, 'bold'), foreground="white", background="#D84315")
+        # --- Montaje de la navegación lateral (NavigationView) ---
+        self.build_navigation()
 
-        # --- Montaje de Notebook (Pestañas) ---
-        self.notebook = ttk.Notebook(self.root)
-        self.notebook.pack(fill='both', expand=True)
-
-        self.tab_new = ttk.Frame(self.notebook)
-        self.tab_manager = ttk.Frame(self.notebook)
-        self.tab_planner = ttk.Frame(self.notebook)
-        self.tab_telegram = ttk.Frame(self.notebook)
-        self.tab_system = ttk.Frame(self.notebook)
-
-        self.notebook.add(self.tab_new, text="🚀 Misión")
-        self.notebook.add(self.tab_manager, text="📡 Radar de Tareas")
-        self.notebook.add(self.tab_planner, text="📅 Planificador")
-        self.notebook.add(self.tab_telegram, text="📱 Telegram & Proxy")
-        self.notebook.add(self.tab_system, text="⚙️ Sistema")
-
-        # --- Inicializar Sub-Interfaces en Orden Estricto ---
+        # --- Inicializar Vistas (Frames colapsables) ---
         self.setup_tab_new()
         self.setup_tab_manager()
         self.setup_tab_planner()
         self.setup_tab_telegram()
         self.setup_tab_system()
+        self.show_view("new")
+        self.root.after(0, self._update_nav_collapse)
+        self.root.bind("<Configure>", self._on_resize)
 
         # Cierre limpio
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
+        # Atajos de teclado (Ctrl+N/S, Esc)
+        self.root.bind_all("<Control-n>", lambda e: self.show_view("new"))
+        self.root.bind_all("<Control-s>", lambda e: self.show_view("system"))
+        self.root.bind_all("<Escape>", self._on_escape)
+
         # Iniciar monitoreo en hilo secundario (Background Thread)
         self.monitor_thread = threading.Thread(target=self.monitor_loop, daemon=True)
         self.monitor_thread.start()
+
+    # =========================================================================
+    # NAVEGACIÓN LATERAL (NAVIGATIONVIEW COLABSABLE) Y TEMA
+    # =========================================================================
+    def build_navigation(self):
+        """Construye el panel lateral expandible al estilo NavigationView."""
+        self.body = ttk.Frame(self.root, style="Content.TFrame")
+        self.body.pack(fill="both", expand=True)
+
+        self.nav = ttk.Frame(self.body, style="Nav.TFrame", width=200)
+        self.nav.pack(side="left", fill="y")
+
+        ttk.Label(self.nav, text="WPlace", style="Header.TLabel").pack(
+            fill="x", padx=10, pady=(12, 4)
+        )
+        ttk.Separator(self.nav, orient="horizontal").pack(fill="x", padx=6, pady=4)
+
+        self.content = ttk.Frame(self.body, style="Content.TFrame")
+        self.content.pack(side="left", fill="both", expand=True)
+
+        nav_items = [
+            ("new", "🚀  Misión"),
+            ("manager", "📡  Radar"),
+            ("planner", "📅  Planificador"),
+            ("telegram", "📱  Telegram"),
+            ("system", "⚙️  Sistema"),
+        ]
+        for key, label in nav_items:
+            btn = tk.Button(
+                self.nav, text=label, anchor="w", bd=0, relief="flat",
+                font=(fluent.system_font(), 12), padx=12, pady=10,
+                command=lambda k=key: self.show_view(k),
+            )
+            btn.pack(fill="x", padx=6, pady=1)
+            btn._nav_label = label
+            btn._nav_short = label[:3]
+            fluent.set_automation_name(btn, label, f"Vista {label}")
+            self.nav_buttons[key] = btn
+            self.nav_frames[key] = ttk.Frame(self.content, style="Content.TFrame")
+            self.nav_frames[key].place(x=0, y=0, relwidth=1, relheight=1)
+
+        self.tab_new = self.nav_frames["new"]
+        self.tab_manager = self.nav_frames["manager"]
+        self.tab_planner = self.nav_frames["planner"]
+        self.tab_telegram = self.nav_frames["telegram"]
+        self.tab_system = self.nav_frames["system"]
+
+    def show_view(self, key):
+        """Muestra una vista y resalta el elemento activo del panel lateral."""
+        self.current_view = key
+        for k, frame in self.nav_frames.items():
+            if k == key:
+                frame.lift()
+        token = self.theme.resolve()
+        for k, btn in self.nav_buttons.items():
+            if k == key:
+                # Transición suave (60 Hz) hacia el color de selección Fluent
+                fluent.schedule_transition(btn, token["nav_selected"], steps=10, interval=16)
+                btn.configure(foreground=token["accent_fg"])
+            else:
+                btn.configure(background=token["nav"], foreground=token["text"])
+
+    def _refresh_nav_highlight(self):
+        token = self.theme.resolve()
+        for k, btn in self.nav_buttons.items():
+            if k == self.current_view:
+                btn.configure(
+                    background=token["nav_selected"],
+                    foreground=token["accent_fg"],
+                )
+            else:
+                btn.configure(
+                    background=token["nav"],
+                    foreground=token["text"],
+                )
+
+    def _update_nav_collapse(self):
+        """Colapsa/expande el panel lateral según el ancho de la ventana."""
+        w = self.root.winfo_width()
+        if w < 1080 and self.nav_expanded:
+            self.nav_expanded = False
+        elif w >= 1080 and not self.nav_expanded:
+            self.nav_expanded = True
+        self.nav.configure(width=48 if not self.nav_expanded else 200)
+        for btn in self.nav_buttons.values():
+            btn.configure(
+                anchor="center" if not self.nav_expanded else "w",
+                text=btn._nav_short if not self.nav_expanded else btn._nav_label,
+            )
+
+    def _on_resize(self, event):
+        if event.widget is self.root:
+            self.root.after(60, self._update_nav_collapse)
+
+    def _on_escape(self, event):
+        # Esc en la vista del visor cierra ventanas hijas; si no hay, no hace nada
+        return "break"
+
+    def apply_theme(self):
+        """(Re)aplica el tema Fluent sin reiniciar la aplicación."""
+        token = self.theme.resolve()
+        fluent.configure_styles(self.tk_style, token)
+        self.root.configure(background=token["bg"])
+        self._token = token
+        for btn in getattr(self, "nav_buttons", {}).values():
+            btn.configure(
+                background=token["nav"], foreground=token["text"], activebackground=token["hover"],
+            )
+        self._refresh_nav_highlight() if hasattr(self, "current_view") else None
+
+    def set_theme_mode(self, mode):
+        """Cambia el modo de tema en caliente: auto/light/dark/high_contrast."""
+        self.theme.mode = mode
+        self.config["theme"] = mode
+        self.guardar_config()
+        self.apply_theme()
 
     def on_close(self):
         self.running = False
@@ -182,8 +293,6 @@ class WPlaceClient:
                     self.et_proxy_port.insert(0, cfg.get("port", ""))
                     self.et_proxy_user.delete(0, tk.END)
                     self.et_proxy_user.insert(0, cfg.get("user", ""))
-                    self.et_proxy_pass.delete(0, tk.END)
-                    self.et_proxy_pass.insert(0, cfg.get("pass", ""))
 
                 sanitized = d.get("sanitized", "Sin proxy")
                 if hasattr(self, 'lbl_proxy_status'):
@@ -439,7 +548,7 @@ class WPlaceClient:
 
     # ================= PESTAÑA MISIÓN (VISOR TÁCTICO) =================
     def setup_tab_new(self):
-        paned = tk.PanedWindow(self.tab_new, orient=tk.HORIZONTAL, sashwidth=6, sashrelief=tk.RAISED, bg="#d0d0d0")
+        paned = tk.PanedWindow(self.tab_new, orient=tk.HORIZONTAL, sashwidth=6, sashrelief=tk.RAISED, bg=self._token["bg"])
         paned.pack(fill='both', expand=True)
 
         left = ttk.Frame(paned, width=400)
@@ -452,9 +561,11 @@ class WPlaceClient:
         tk.Label(l1, text="Nombre:").grid(row=1, column=0, sticky='e')
         self.task_name = tk.Entry(l1, width=22)
         self.task_name.grid(row=1, column=1)
+        fluent.set_automation_name(self.task_name, "Nombre de la tarea", "Nombre de la misión a monitorear")
+        fluent.apply_focus_highlight(self.task_name, self._token["accent"])
         
         tk.Label(l1, text="Objetivo:").grid(row=2, column=0, sticky='e')
-        self.combo_source = ttk.Combobox(l1, values=["BPlace", "WPlace"], state="readonly", width=20)
+        self.combo_source = ttk.Combobox(l1, values=["WPlace"], state="readonly", width=20)
         self.combo_source.current(0)
         self.combo_source.grid(row=2, column=1, pady=5)
 
@@ -463,9 +574,13 @@ class WPlaceClient:
         tk.Label(l2, text="P1:").grid(row=0, column=0)
         self.entry_p1 = tk.Entry(l2, width=35)
         self.entry_p1.grid(row=0, column=1, pady=2)
+        fluent.set_automation_name(self.entry_p1, "Coordenada P1", "Punto inicial de la región")
+        fluent.apply_focus_highlight(self.entry_p1, self._token["accent"])
         tk.Label(l2, text="P2:").grid(row=1, column=0)
         self.entry_p2 = tk.Entry(l2, width=35)
         self.entry_p2.grid(row=1, column=1, pady=2)
+        fluent.set_automation_name(self.entry_p2, "Coordenada P2", "Punto final de la región")
+        fluent.apply_focus_highlight(self.entry_p2, self._token["accent"])
         
         f_fav = ttk.Frame(l2)
         f_fav.grid(row=2, column=0, columnspan=2, pady=5)
@@ -541,39 +656,49 @@ class WPlaceClient:
         self.canvas.create_oval(cx-r, cy-r, cx+r, cy+r, outline="#00FF00", width=2, tags="marker")
 
     def preview(self):
+        """Descarga la región de forma asíncrona sin bloquear la UI, mostrando un indicador de carga."""
         try:
             target_source = self.combo_source.get()
-            base_url = SOURCES[target_source]
-
             p1 = self.str_to_coords(self.entry_p1.get() or "0,0")
             p2 = self.str_to_coords(self.entry_p2.get() or "1000,1000")
             c = {"x_start": min(p1[0], p2[0]), "y_start": min(p1[1], p2[1]), "x_end": max(p1[0], p2[0]), "y_end": max(p1[1], p2[1])}
             w, h = c['x_end']-c['x_start'], c['y_end']-c['y_start']
-            if w*h > 25000000 and not messagebox.askyesno("Alerta", "Área gigante. ¿Seguir?"): 
+            if w*h > 25000000 and not messagebox.askyesno("Alerta", "Área gigante. ¿Seguir?"):
                 return
-            
-            img = Image.new("RGBA", (w, h))
-            tx_s, tx_e = c['x_start']//1000, (c['x_end']-1)//1000
-            ty_s, ty_e = c['y_start']//1000, (c['y_end']-1)//1000
-            
-            self.root.title(f"Descargando de {target_source}...")
-            self.root.update()
-            
-            headers = {'User-Agent': 'Mozilla/5.0'}
-            for tx in range(tx_s, tx_e + 1):
-                for ty in range(ty_s, ty_e + 1):
-                    try: 
-                        r = requests.get(f"{base_url}/{tx}/{ty}.png", headers=headers, timeout=2)
-                        if r.status_code == 200: 
-                            img.paste(Image.open(BytesIO(r.content)).convert("RGBA"), ((tx*1000)-c['x_start'], (ty*1000)-c['y_start']))
-                    except Exception: 
-                        pass
-            self.root.title("WPlace Commander v20.0 (Clean Ops)")
-            self.preview_image_raw = img
-            self.zoom_level = 1.0
-            self.render_image()
-        except Exception as e: 
+
+        except Exception as e:
             messagebox.showerror("Error", str(e))
+            return
+
+        # Indicador de carga no bloqueante (skeleton) sobre el visor
+        self._show_skeleton(f"Descargando de {target_source}…")
+
+        def worker():
+            img = tiles.download_area(c, target_source, timeout=2)
+            self.root.after(0, lambda: self._finish_preview(img))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _show_skeleton(self, text):
+        self._clear_skel()
+        self.skel = ttk.Label(self.canvas, text=f"⏳ {text}", style="Title.TLabel")
+        self.canvas.create_window(self.canvas.winfo_width() // 2,
+                                  self.canvas.winfo_height() // 2, window=self.skel)
+
+    def _clear_skel(self):
+        if hasattr(self, "skel") and self.skel.winfo_exists():
+            self.skel.destroy()
+        self.canvas.delete("skeleton")
+
+    def _finish_preview(self, img):
+        self._clear_skel()
+        self.root.title("WPlace Commander")
+        if img is None:
+            messagebox.showerror("Error", "Área inválida o excesiva. Ajusta las coordenadas.")
+            return
+        self.preview_image_raw = img
+        self.zoom_level = 1.0
+        self.render_image()
 
     def zoom(self, f):
         if not self.preview_image_raw: return
@@ -670,7 +795,8 @@ class WPlaceClient:
                 tid = r.json()['task_id']
                 requests.post(f"{self.server_ip.get().rstrip('/')}/tasks/{tid}/start", timeout=2)
                 messagebox.showinfo("OK", f"Tarea iniciada (ID {tid})")
-                self.notebook.select(1)
+                fluent.show_toast("WPlace Commander", f"Tarea {tid} iniciada correctamente")
+                self.show_view("manager")
                 self.guardar_config()
             else: 
                 messagebox.showerror("Error", r.text)
@@ -938,14 +1064,25 @@ class WPlaceClient:
 
     # ================= PESTAÑA SISTEMA =================
     def setup_tab_system(self):
-        f = ttk.LabelFrame(self.tab_system, text="Gestión Global")
-        f.pack(fill='both', padx=20, pady=20)
-        ttk.Button(f, text="🔍 INSPECCIONAR CAPTURA", style="Accent.TButton", command=self.inspect_file).pack(pady=10, fill='x')
-        ttk.Button(f, text="📥 DESCARGAR BACKUP COMPLETO", style="Orange.TButton", command=lambda: self.descargar_zip(None)).pack(pady=10, fill='x')
-        ttk.Button(f, text="📂 ABRIR CARPETA LOCAL", style="Blue.TButton", command=lambda: self.abrir_carpeta(OUTPUT_FOLDER)).pack(pady=10, fill='x')
+        f = ttk.LabelFrame(self.tab_system, text="Apariencia (Fluent)")
+        f.pack(fill='x', padx=20, pady=(20, 5))
+        ttk.Label(f, text="Tema del sistema:").pack(side='left', padx=10, pady=8)
+        self.var_theme = tk.StringVar(value=self.theme.mode)
+        for mode, txt in (("auto", "Automático"), ("light", "Claro"),
+                          ("dark", "Oscuro"), ("high_contrast", "Alto contraste")):
+            ttk.Radiobutton(
+                f, text=txt, value=mode, variable=self.var_theme,
+                command=lambda m=mode: self.set_theme_mode(m),
+            ).pack(side='left', padx=8)
+
+        g = ttk.LabelFrame(self.tab_system, text="Gestión Global")
+        g.pack(fill='both', padx=20, pady=10)
+        ttk.Button(g, text="🔍 INSPECCIONAR CAPTURA", style="Accent.TButton", command=self.inspect_file).pack(pady=10, fill='x')
+        ttk.Button(g, text="📥 DESCARGAR BACKUP COMPLETO", style="Orange.TButton", command=lambda: self.descargar_zip(None)).pack(pady=10, fill='x')
+        ttk.Button(g, text="📂 ABRIR CARPETA LOCAL", style="Blue.TButton", command=lambda: self.abrir_carpeta(OUTPUT_FOLDER)).pack(pady=10, fill='x')
         
         f2 = ttk.LabelFrame(self.tab_system, text="Zona de Peligro")
-        f2.pack(fill='x', padx=20, pady=20)
+        f2.pack(fill='x', padx=20, pady=10)
         ttk.Button(f2, text="🧹 ELIMINAR TODAS LAS TAREAS", style="Warning.TButton", command=self.del_all_tasks).pack(side='left', expand=True, padx=5, pady=10)
         ttk.Button(f2, text="🔥 ELIMINAR TODAS LAS FOTOS", style="Red.TButton", command=self.del_all_photos).pack(side='right', expand=True, padx=5, pady=10)
 
