@@ -9,6 +9,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.wplace.commander.data.ProxySetRequest
+import com.wplace.commander.data.TelegramSetRequest
 import com.wplace.commander.network.ApiClient
 import com.wplace.commander.ui.WPlaceViewModel
 
@@ -43,6 +44,14 @@ private fun TelegramTab(api: com.wplace.commander.network.WPlaceApi, vm: WPlaceV
     LaunchedEffect(Unit) {
         token = ApiClient.getTgToken(context)
         chat = ApiClient.getTgChat(context)
+        try {
+            val s = api.telegramStatus()
+            if (s.token.isNotBlank() || s.chat_id.isNotBlank()) {
+                token = s.token
+                chat = s.chat_id
+                ApiClient.saveTgCreds(context, s.token, s.chat_id)
+            }
+        } catch (_: Exception) {}
     }
 
     Column(
@@ -58,7 +67,13 @@ private fun TelegramTab(api: com.wplace.commander.network.WPlaceApi, vm: WPlaceV
             label = { Text("Chat ID") }, singleLine = true, modifier = Modifier.fillMaxWidth())
         Button(onClick = {
             ApiClient.saveTgCreds(context, token, chat)
-            status = "Credenciales globales guardadas"
+            status = "Guardando…"
+            vm.runApi({
+                val r = api.telegramSet(TelegramSetRequest(token.trim(), chat.trim()))
+                status = r.message.ifBlank { "Credenciales globales guardadas" }
+            }, {
+                if (status == "Guardando…") status = "Credenciales globales guardadas (servidor no accesible)"
+            })
         }, modifier = Modifier.fillMaxWidth()) {
             Text("Guardar credenciales globales")
         }

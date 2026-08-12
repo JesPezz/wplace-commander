@@ -56,4 +56,10 @@ interface WPlaceApi {
 
     @GET("proxy/check_ip")
     suspend fun proxyCheckIp(): ProxyMessageResponse
+
+    @GET("telegram/status")
+    suspend fun telegramStatus(): TelegramStatusResponse
+
+    @POST("telegram/set")
+    suspend fun telegramSet(@Body body: TelegramSetRequest): TelegramMessageResponse
 }

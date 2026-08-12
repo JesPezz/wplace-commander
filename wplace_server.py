@@ -3,6 +3,7 @@ from collections import deque
 from flask import Flask, request, jsonify, send_file
 from task_manager import TaskManager
 from proxy_manager import proxy_mgr
+from telegram_config import telegram_cfg
 
 # 1. INICIALIZAR LA APP
 app = Flask(__name__)
@@ -14,8 +15,13 @@ PLAN_FILE = "plan_state.json"
 # 2. RUTAS DEL TASK MANAGER
 # ==========================================
 @app.route('/tasks/create', methods=['POST'])
-def create_task(): 
-    return jsonify({"status": "ok", "task_id": manager.create_task(request.json)})
+def create_task():
+    data = request.json or {}
+    # Si la tarea no trae credenciales de Telegram, usar las globales del servidor
+    for key, gc_key in (("tg_token", "token"), ("tg_chat", "chat_id")):
+        if not str(data.get(key, "")).strip():
+            data[key] = telegram_cfg.config.get(gc_key, "")
+    return jsonify({"status": "ok", "task_id": manager.create_task(data)})
 
 @app.route('/tasks/<tid>/start', methods=['POST'])
 def start_task(tid): 
@@ -252,6 +258,28 @@ def set_proxy_route():
             "sanitized": proxy_mgr.sanitize_display()
         })
     return jsonify({"status": "error", "message": "No se pudo escribir el archivo proxy_config.json"}), 500
+
+@app.route('/telegram/status', methods=['GET'])
+def get_telegram_status():
+    return jsonify({
+        "status": "ok",
+        "token": telegram_cfg.config.get("token", ""),
+        "chat_id": telegram_cfg.config.get("chat_id", ""),
+        "has_token": bool(telegram_cfg.config.get("token")),
+        "has_chat": bool(telegram_cfg.config.get("chat_id"))
+    })
+
+@app.route('/telegram/set', methods=['POST'])
+def set_telegram_route():
+    data = request.json or {}
+    token = str(data.get('token', '')).strip()
+    chat_id = str(data.get('chat_id', '')).strip()
+    if telegram_cfg.set_config(token, chat_id):
+        msg = "Credenciales globales de Telegram guardadas"
+        if not token and not chat_id:
+            msg = "Credenciales globales de Telegram eliminadas"
+        return jsonify({"status": "ok", "message": msg})
+    return jsonify({"status": "error", "message": "No se pudo escribir el archivo telegram_config.json"}), 500
 
 if __name__ == '__main__':
     threading.Thread(target=monitor_plan, daemon=True).start()

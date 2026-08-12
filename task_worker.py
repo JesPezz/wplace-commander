@@ -3,6 +3,7 @@ from datetime import datetime
 from PIL import Image, PngImagePlugin
 import numpy as np
 import tiles
+from telegram_config import telegram_cfg
 
 class TaskWorker:
     def __init__(self, task_id, config, data_dir, sentry_dir):
@@ -75,8 +76,11 @@ class TaskWorker:
     def send_telegram(self, title, details, img_path=None):
         token = self.config.get("tg_token")
         chat_id = self.config.get("tg_chat")
-        if not token or not chat_id: 
-            return
+        if not token or not chat_id:
+            token = telegram_cfg.config.get("token", "")
+            chat_id = telegram_cfg.config.get("chat_id", "")
+            if not token or not chat_id: 
+                return
         
         start_str = datetime.fromtimestamp(self.start_time_ts).strftime('%H:%M') if self.start_time_ts else "--:--"
         dur = float(self.config.get('duration_hours', 0))

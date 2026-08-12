@@ -125,6 +125,27 @@ data class PlanSetRequest(
 )
 
 @Serializable
+data class TelegramStatusResponse(
+    val status: String = "",
+    val token: String = "",
+    val chat_id: String = "",
+    val has_token: Boolean = false,
+    val has_chat: Boolean = false,
+)
+
+@Serializable
+data class TelegramSetRequest(
+    val token: String,
+    val chat_id: String,
+)
+
+@Serializable
+data class TelegramMessageResponse(
+    val status: String = "",
+    val message: String = "",
+)
+
+@Serializable
 data class FavoriteMission(
     val name: String = "",
     val x_start: Long = 0,
