@@ -60,10 +60,23 @@ class WPlaceViewModel(private val appContext: Context) : ViewModel() {
         if (polling) return
         polling = true
         viewModelScope.launch {
+            loadTelegramConfig()
             while (true) {
                 refreshStatus()
                 delay(3000)
             }
+        }
+    }
+
+    /** Carga las credenciales globales de Telegram desde el servidor y las persiste localmente. */
+    fun loadTelegramConfig() {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val s = ApiClient.api().telegramStatus()
+                if (s.token.isNotBlank() || s.chat_id.isNotBlank()) {
+                    ApiClient.saveTgCreds(appContext, s.token, s.chat_id)
+                }
+            } catch (_: Exception) {}
         }
     }
 

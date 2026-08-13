@@ -28,6 +28,28 @@ class TelegramConfig:
                     })
             except Exception as e:
                 logger.error(f"Error cargando {CONFIG_FILE}: {e}")
+        if not self.is_configured():
+            self._seed_from_manifest()
+
+    def _seed_from_manifest(self):
+        """Si no hay configuración global, adopta las credenciales de la primera
+        tarea de tasks_manifest.json que las tenga (migración de instalaciones previas)."""
+        if not os.path.exists("tasks_manifest.json"):
+            return
+        try:
+            with open("tasks_manifest.json", "r", encoding="utf-8") as f:
+                manifest = json.load(f)
+            for tid in sorted(manifest.keys(), key=lambda x: int(x)):
+                cfg = manifest[tid]
+                tok = str(cfg.get("tg_token", "")).strip()
+                chat = str(cfg.get("tg_chat", "")).strip()
+                if tok and chat:
+                    self.config = {"token": tok, "chat_id": chat}
+                    self.set_config(tok, chat)
+                    logger.info("Credenciales globales de Telegram sembradas desde la tarea %s", tid)
+                    return
+        except Exception as e:
+            logger.error(f"Error sembrando credenciales de Telegram: {e}")
 
     def is_configured(self):
         return bool(self.config.get("token") and self.config.get("chat_id"))

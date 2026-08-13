@@ -168,7 +168,9 @@ def get_plan_status():
                 "expired": is_expired,
                 "restante": max(0, restante), 
                 "px_objetivo": plan['px_objetivo'], 
-                "config_txt": plan.get('config_txt', '')
+                "config_txt": plan.get('config_txt', ''),
+                "token": plan.get('token', ''),
+                "chat_id": plan.get('chat_id', '')
             })
         except:
             return jsonify({"active": False})

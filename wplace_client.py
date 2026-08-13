@@ -360,7 +360,15 @@ class WPlaceClient:
         self.config["tg_token"] = self.et_tok.get().strip()
         self.config["tg_chat"] = self.et_chat.get().strip()
         self.guardar_config()
-        messagebox.showinfo("Guardado", "Credenciales de Telegram guardadas globalmente.")
+        try:
+            url = f"{self.server_ip.get().rstrip('/')}/telegram/set"
+            requests.post(url, json={
+                "token": self.config["tg_token"],
+                "chat_id": self.config["tg_chat"]
+            }, timeout=6)
+        except Exception:
+            pass
+        messagebox.showinfo("Guardado", "Credenciales de Telegram guardadas globalmente (y enviadas al servidor).")
 
     # ================= PESTAÑA PLANIFICADOR =================
     def setup_tab_planner(self):

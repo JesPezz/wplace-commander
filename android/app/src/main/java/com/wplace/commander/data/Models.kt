@@ -82,6 +82,8 @@ data class PlanStatusResponse(
     val restante: Double = 0.0,
     val px_objetivo: Int = 0,
     val config_txt: String = "",
+    val token: String = "",
+    val chat_id: String = "",
 )
 
 @Serializable

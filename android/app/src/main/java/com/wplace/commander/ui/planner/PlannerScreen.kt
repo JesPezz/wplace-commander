@@ -37,6 +37,7 @@ fun PlannerScreen(vm: WPlaceViewModel, modifier: Modifier = Modifier) {
     var planConfigTxt by remember { mutableStateOf("") }
 
     LaunchedEffect(Unit) {
+        var lastActive = false
         while (true) {
             try {
                 val p = api.planStatus()
@@ -45,6 +46,16 @@ fun PlannerScreen(vm: WPlaceViewModel, modifier: Modifier = Modifier) {
                 planRestante = p.restante.toLong()
                 planPxObjetivo = p.px_objetivo
                 planConfigTxt = p.config_txt
+                if (p.active && !p.expired) {
+                    if (p.token.isNotBlank()) {
+                        ApiClient.saveTgCreds(context, p.token, p.chat_id)
+                    }
+                    if (!lastActive) {
+                        val pxActuales = maxOf(0, p.px_objetivo - (p.restante.toLong() / 30).toInt())
+                        if (actuales.isBlank()) actuales = pxActuales.toString()
+                    }
+                }
+                lastActive = p.active && !p.expired
             } catch (_: Exception) {}
             delay(3000)
         }
