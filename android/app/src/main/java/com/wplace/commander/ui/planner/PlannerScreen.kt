@@ -35,6 +35,8 @@ fun PlannerScreen(vm: WPlaceViewModel, modifier: Modifier = Modifier) {
     var planRestante by remember { mutableStateOf(0L) }
     var planPxObjetivo by remember { mutableStateOf(0) }
     var planConfigTxt by remember { mutableStateOf("") }
+    var planToken by remember { mutableStateOf("") }
+    var planChatId by remember { mutableStateOf("") }
 
     LaunchedEffect(Unit) {
         var lastActive = false
@@ -46,6 +48,8 @@ fun PlannerScreen(vm: WPlaceViewModel, modifier: Modifier = Modifier) {
                 planRestante = p.restante.toLong()
                 planPxObjetivo = p.px_objetivo
                 planConfigTxt = p.config_txt
+                planToken = p.token
+                planChatId = p.chat_id
                 if (p.active && !p.expired) {
                     if (p.token.isNotBlank()) {
                         ApiClient.saveTgCreds(context, p.token, p.chat_id)
@@ -124,8 +128,8 @@ fun PlannerScreen(vm: WPlaceViewModel, modifier: Modifier = Modifier) {
                         }
                         result = txt
 
-                        val token = ApiClient.getTgToken(context)
-                        val chatId = ApiClient.getTgChat(context)
+                        val token = ApiClient.getTgToken(context).ifBlank { planToken }
+                        val chatId = ApiClient.getTgChat(context).ifBlank { planChatId }
                         if (token.isBlank() || chatId.isBlank()) {
                             warning = "Configura las credenciales globales en la pestaña Telegram para recibir la alerta."
                             busy = false
