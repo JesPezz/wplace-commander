@@ -3,6 +3,7 @@ import sys
 import json
 import time
 import re
+import math
 import threading
 import platform
 import subprocess
@@ -19,6 +20,18 @@ import fluent
 CONFIG_FILE = "client_config.json"
 OUTPUT_FOLDER = "wplace_downloads"
 DEFAULT_TOUCH = fluent.DEFAULT_TOUCH
+
+# Lienzo WPlace: proyección Web Mercator sobre un mundo de 2048000px.
+# Fuente de la conversión: sabueso_worker.py (versión anterior del proyecto, pixel_a_url).
+WPLACE_MAP_SIZE = 2_048_000.0
+
+
+def wplace_pixel_from_latlng(lat, lng):
+    """Convierte lat/lng a píxel absoluto del lienzo WPlace (Web Mercator, mapa 2048000px)."""
+    gx = (lng + 180.0) / 360.0 * WPLACE_MAP_SIZE
+    n = math.asinh(math.tan(math.radians(lat)))
+    gy = (WPLACE_MAP_SIZE / 2.0) * (1.0 - n / math.pi)
+    return gx, gy
 
 # =====================================================================
 # 🛠️ HELPER DE RECURSOS (Para compatibilidad con PyInstaller y .exe)
@@ -82,6 +95,9 @@ class WPlaceClient:
         self.show_view("new")
         self.root.after(0, self._update_nav_collapse)
         self.root.bind("<Configure>", self._on_resize)
+
+        # Carga asíncrona de credenciales de Telegram desde el servidor (respaldo local)
+        threading.Thread(target=self.cargar_tg_desde_servidor, daemon=True).start()
 
         # Cierre limpio
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
@@ -535,6 +551,33 @@ class WPlaceClient:
         except Exception as e:
             print(f"Error guardando configuración: {e}")
 
+    def cargar_tg_desde_servidor(self):
+        """Descarga las credenciales globales de Telegram desde el servidor al arrancar.
+
+        Prioridad: si el servidor responde con credenciales, las usa y las persiste
+        en client_config.json. Si el servidor no responde o viene vacío, conserva
+        las que ya estén guardadas localmente.
+        """
+        try:
+            url = f"{self.server_ip.get().rstrip('/')}/telegram/status"
+            r = requests.get(url, timeout=5)
+            r.raise_for_status()
+            d = r.json()
+        except Exception:
+            return
+        if d.get("has_token") or d.get("has_chat"):
+            self.config["tg_token"] = d.get("token", self.config.get("tg_token", ""))
+            self.config["tg_chat"] = d.get("chat_id", self.config.get("tg_chat", ""))
+            self.guardar_config()
+            self.root.after(0, self._aplicar_credenciales_tg)
+
+    def _aplicar_credenciales_tg(self):
+        for widget, key in ((getattr(self, "et_tok", None), "tg_token"),
+                            (getattr(self, "et_chat", None), "tg_chat")):
+            if widget is not None:
+                widget.delete(0, tk.END)
+                widget.insert(0, self.config.get(key, ""))
+
     def abrir_carpeta(self, path):
         path = os.path.abspath(path)
         if platform.system() == "Windows": os.startfile(path)
@@ -597,6 +640,7 @@ class WPlaceClient:
         self.combo_favs.bind("<<ComboboxSelected>>", self.cargar_fav)
         ttk.Button(f_fav, text="💾", width=3, command=self.guardar_fav).pack(side='left', padx=2)
         ttk.Button(f_fav, text="🗑", width=3, command=self.del_fav).pack(side='left', padx=2)
+        ttk.Button(l2, text="📥 Importar Overlay (.wplace)", command=self.importar_overlay).grid(row=3, column=0, columnspan=2, sticky='ew', padx=5, pady=2)
 
         l3 = ttk.LabelFrame(left, text="3. Configuración")
         l3.pack(fill='x', padx=5, pady=5)
@@ -765,6 +809,46 @@ class WPlaceClient:
             self.guardar_config()
             self.combo_favs['values'] = list(self.config["favorites"].keys())
             self.combo_favs.set(n)
+
+    def importar_overlay(self):
+        """Importa un overlay exportado por WPlace (.wplace.json) y lo guarda como favorito.
+
+        Convierte los bounds geográficos (north/south/west/east) a píxeles absolutos
+        del lienzo WPlace (Web Mercator, mapa de 2048000px) y rellena P1/P2.
+        """
+        path = filedialog.askopenfilename(
+            title="Importar Overlay de WPlace",
+            filetypes=[("Overlays de WPlace", "*.wplace"), ("Overlays de WPlace (JSON)", "*.wplace.json"), ("Archivos JSON", "*.json")])
+        if not path:
+            return
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            b = data.get("bounds")
+            if not b or any(k not in b for k in ("north", "south", "west", "east")):
+                raise ValueError("El archivo no tiene un campo 'bounds' válido (north/south/west/east).")
+            x1, y1 = wplace_pixel_from_latlng(b["north"], b["west"])
+            x2, y2 = wplace_pixel_from_latlng(b["south"], b["east"])
+            x1, y1, x2, y2 = map(int, map(round, (x1, y1, x2, y2)))
+        except Exception as e:
+            messagebox.showerror("Error", f"No se pudo importar el overlay:\n{e}")
+            return
+
+        self.entry_p1.delete(0, tk.END)
+        self.entry_p1.insert(0, self.coords_to_str(x1, y1))
+        self.entry_p2.delete(0, tk.END)
+        self.entry_p2.insert(0, self.coords_to_str(x2, y2))
+
+        default = os.path.splitext(data.get("name", os.path.basename(path)))[0]
+        name = simpledialog.askstring("Nombre", "Nombre de la zona:", initialvalue=default or "Overlay")
+        if name:
+            if "favorites" not in self.config: self.config["favorites"] = {}
+            self.config["favorites"][name] = {"p1": self.entry_p1.get(), "p2": self.entry_p2.get()}
+            self.guardar_config()
+            self.combo_favs['values'] = list(self.config["favorites"].keys())
+            self.combo_favs.set(name)
+            self.task_name.delete(0, tk.END)
+            self.task_name.insert(0, name)
 
     def del_fav(self):
         n = self.combo_favs.get()
