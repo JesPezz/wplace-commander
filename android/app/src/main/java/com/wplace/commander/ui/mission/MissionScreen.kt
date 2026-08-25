@@ -9,10 +9,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import android.net.Uri
 import com.wplace.commander.data.Coords
 import com.wplace.commander.data.CreateTaskRequest
 import com.wplace.commander.data.FavoriteMission
 import com.wplace.commander.data.FavoritesStore
+import com.wplace.commander.data.OverlayImporter
 import com.wplace.commander.network.ApiClient
 import com.wplace.commander.ui.WPlaceViewModel
 
@@ -49,6 +53,43 @@ fun MissionScreen(vm: WPlaceViewModel, modifier: Modifier = Modifier) {
     }.getOrNull()
 
     fun persistFavorites() { FavoritesStore.save(context, favorites) }
+
+    val overlayLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            try {
+                val content = context.contentResolver.openInputStream(uri)
+                    ?.bufferedReader()?.use { it.readText() }
+                    ?: throw IllegalArgumentException("No se pudo leer el archivo")
+                val reg = OverlayImporter.parseOverlay(content)
+                name = reg.name
+                xs = reg.xStart.toString()
+                ys = reg.yStart.toString()
+                xe = reg.xEnd.toString()
+                ye = reg.yEnd.toString()
+                val fav = FavoriteMission(
+                    name = reg.name,
+                    x_start = reg.xStart,
+                    y_start = reg.yStart,
+                    x_end = reg.xEnd,
+                    y_end = reg.yEnd,
+                    save_timelapse = saveTl,
+                    sentry = sentry,
+                    interval = interval.toIntOrNull() ?: 60,
+                    duration_hours = duration.toDoubleOrNull() ?: 0.0,
+                    limit_mb = limitMb.toIntOrNull() ?: 500,
+                    alert_pct = alertPct.toDoubleOrNull() ?: 90.0,
+                )
+                favorites = favorites + (reg.name to fav)
+                selectedFav = reg.name
+                persistFavorites()
+                favFeedback = "Overlay importado y guardado en favoritos"
+            } catch (e: Exception) {
+                favFeedback = "Error al importar: ${e.message}"
+            }
+        }
+    }
 
     fun loadFavorite(f: FavoriteMission) {
         name = f.name
@@ -141,6 +182,13 @@ fun MissionScreen(vm: WPlaceViewModel, modifier: Modifier = Modifier) {
                     }
                 }
                 favFeedback?.let { Text(it, color = MaterialTheme.colorScheme.primary) }
+
+                OutlinedButton(
+                    onClick = { overlayLauncher.launch(arrayOf("*/*")) },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("📥 Importar overlay (.wplace)")
+                }
 
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Switch(checked = saveTl, onCheckedChange = { saveTl = it })
