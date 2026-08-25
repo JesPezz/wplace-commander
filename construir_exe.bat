@@ -9,7 +9,7 @@ echo.
 echo ===================================================
 echo   2. Verificando / Instalando PyInstaller
 echo ===================================================
-python -m pip install pyinstaller pillow >nul 2>&1
+python -m pip install pyinstaller pillow requests pyperclip >nul 2>&1
 
 echo.
 echo ===================================================

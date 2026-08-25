@@ -2,6 +2,8 @@
 
 Toda comunicación, código y commits en **español**. Proyecto Python puro (sin framework de tests, sin lint, sin CI).
 
+**Ubicación del repositorio:** `/root/WPlace-Automation-System`
+
 ## Arquitectura
 
 - `wplace_server.py` — API Flask para Raspberry Pi (0.0.0.0:5000). Punto de entrada del servidor.
@@ -20,7 +22,8 @@ Cliente y servidor se comunican vía REST (`/tasks/*`, `/status`, `/plan/*`, `/p
 - Servidor (RPi): `python3 wplace_server.py`
 - Cliente en modo consola (debug Windows): `Lanzar_Cliente.bat`; manual: `python wplace_client.py`
 - Compilar EXE (Windows): `construir_exe.bat` → genera icono (`generar_icono.py`) y corre PyInstaller `--onedir --windowed`; salida en `dist\wplace_client\wplace_client.exe`.
-- Compilar APK (Android): en `android/`, regenerar `gradle wrapper` si falta `gradle/wrapper/gradle-wrapper.jar` y luego `./gradlew assembleDebug`; el APK queda en `app/build/outputs/apk/debug/app-debug.apk`.
+- Compilar APK (Android): en `android/`, regenerar `gradle wrapper` si falta `gradle/wrapper/gradle-wrapper.jar` y luego `./gradlew assembleDebug`; el APK queda en `app/build/outputs/apk/debug/app-debug.apk`. Requiere JDK 17 y Android SDK (`local.properties` → `sdk.dir`).
+- **Firma del APK:** usa SIEMPRE `android/wplace-commander.keystore` (alias `androiddebugkey`, pass `android`), configurado en `signingConfigs` para debug y release. Es la clave con la que están instaladas las versiones en los teléfonos; si compilas con el `debug.keystore` por defecto de otra máquina (RPi vs PC), el APK NO actualiza ("App not installed"). Copia ese keystore a cualquier máquina que compile.
 - No hay suite de tests; la verificación es ejecutar/compilar cuando el usuario lo pida.
 
 ## Gotchas operativos

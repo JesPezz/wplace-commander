@@ -35,8 +35,21 @@ android {
         }
     }
 
+    signingConfigs {
+        create("wplace") {
+            storeFile = file("../wplace-commander.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
+    }
+
     buildTypes {
+        debug {
+            signingConfig = signingConfigs.getByName("wplace")
+        }
         release {
+            signingConfig = signingConfigs.getByName("wplace")
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
