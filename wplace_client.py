@@ -1,4 +1,4 @@
-APP_VERSION = "18.7.0"
+APP_VERSION = "18.8.0"
 import os
 import sys
 import json

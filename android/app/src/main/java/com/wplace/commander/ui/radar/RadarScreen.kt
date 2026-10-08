@@ -8,7 +8,6 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -21,6 +20,12 @@ import com.wplace.commander.data.UpdateTaskRequest
 import com.wplace.commander.data.buildConfigJson
 import com.wplace.commander.network.ApiClient
 import com.wplace.commander.ui.WPlaceViewModel
+import com.wplace.commander.ui.theme.NeumorphicButton
+import com.wplace.commander.ui.theme.NeumorphicCard
+import com.wplace.commander.ui.theme.NeumorphicTextField
+import com.wplace.commander.ui.theme.NeumorphicTextButton
+import com.wplace.commander.ui.theme.liveRegion
+import com.wplace.commander.ui.theme.wplaceStatusColors
 import com.wplace.commander.util.downloadZipToUri
 import kotlinx.serialization.json.JsonObject
 
@@ -61,16 +66,29 @@ fun RadarScreen(vm: WPlaceViewModel, modifier: Modifier = Modifier) {
 
 @Composable
 private fun TaskCard(task: TaskInfo, vm: WPlaceViewModel, context: android.content.Context) {
+    val statusColors = wplaceStatusColors()
     val running = task.status.equals("running", ignoreCase = true) || task.status.equals("active", ignoreCase = true)
-    val color = when {
-        running -> Color(0xFF2E7D32)
-        task.status.equals("done", ignoreCase = true) || task.status.equals("stopped", ignoreCase = true) -> Color(0xFF616161)
-        else -> MaterialTheme.colorScheme.primary
+    val stopped = task.status.equals("done", ignoreCase = true) || task.status.equals("stopped", ignoreCase = true)
+    val statusColor = when {
+        running -> statusColors.success
+        stopped -> MaterialTheme.colorScheme.onSurfaceVariant
+        else -> statusColors.info
+    }
+    val statusIcon = when {
+        running -> "🟢"
+        stopped -> "⚪"
+        else -> "🔵"
+    }
+    val statusLabel = when {
+        running -> "En marcha"
+        stopped -> "Detenida"
+        else -> task.status.ifBlank { "Pendiente" }
     }
 
     var feedback by remember { mutableStateOf<String?>(null) }
     var showEdit by remember { mutableStateOf(false) }
     var editBusy by remember { mutableStateOf(false) }
+    var confirmDelete by remember { mutableStateOf(false) }
 
     // Estados del diálogo de edición
     var eName by remember { mutableStateOf(task.config?.string("name") ?: task.name) }
@@ -91,12 +109,14 @@ private fun TaskCard(task: TaskInfo, vm: WPlaceViewModel, context: android.conte
         }
     }
 
-    Card {
+    NeumorphicCard {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(10.dp).background(color, androidx.compose.foundation.shape.CircleShape))
+                Box(Modifier.size(10.dp).background(statusColor, androidx.compose.foundation.shape.CircleShape))
                 Spacer(Modifier.width(8.dp))
                 Text(task.name, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                Text("$statusIcon $statusLabel", style = MaterialTheme.typography.labelSmall,
+                    color = statusColor, modifier = Modifier.liveRegion())
             }
             Text("ID ${task.id}  •  capturas: ${task.captures}",
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -110,28 +130,26 @@ private fun TaskCard(task: TaskInfo, vm: WPlaceViewModel, context: android.conte
             if (task.start_str.isNotBlank()) {
                 Text("Inicio: ${task.start_str}", style = MaterialTheme.typography.bodySmall)
             }
-            feedback?.let { Text(it, color = MaterialTheme.colorScheme.primary) }
+            feedback?.let { Text(it, color = MaterialTheme.colorScheme.primary, modifier = Modifier.liveRegion()) }
 
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (running) {
-                    Button(onClick = { vm.runApi({ ApiClient.api().stopTask(task.id) }) { vm.refreshStatus() } }) {
+                    NeumorphicButton(onClick = { vm.runApi({ ApiClient.api().stopTask(task.id) }) { vm.refreshStatus() } }) {
                         Text("Detener")
                     }
                 } else {
-                    Button(onClick = { vm.runApi({ ApiClient.api().startTask(task.id) }) { vm.refreshStatus() } }) {
+                    NeumorphicButton(onClick = { vm.runApi({ ApiClient.api().startTask(task.id) }) { vm.refreshStatus() } }) {
                         Text("Iniciar")
                     }
                 }
-                OutlinedButton(onClick = {
-                    vm.runApi({ ApiClient.api().deleteTask(task.id) }) { vm.refreshStatus() }
-                }) {
+                NeumorphicTextButton(onClick = { confirmDelete = true }) {
                     Text("Eliminar")
                 }
             }
 
             // Acciones: favorito, editar y ZIP
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = {
+                NeumorphicTextButton(onClick = {
                     val cfg = task.config
                     val xs = cfg?.long("x_start")
                     val ys = cfg?.long("y_start")
@@ -155,10 +173,10 @@ private fun TaskCard(task: TaskInfo, vm: WPlaceViewModel, context: android.conte
                         FavoritesStore.save(context, favs)
                         feedback = "⭐ Guardada como favorita"
                     }
-                }) {
+                }, contentDescription = "Guardar tarea como favorita") {
                     Text("⭐")
                 }
-                OutlinedButton(onClick = {
+                NeumorphicTextButton(onClick = {
                     eName = task.config?.string("name") ?: task.name
                     eInterval = (task.config?.number("interval") ?: 1.0).toString()
                     eAlert = (task.config?.number("alert_pct") ?: 5.0).toString()
@@ -167,13 +185,13 @@ private fun TaskCard(task: TaskInfo, vm: WPlaceViewModel, context: android.conte
                     eTl = task.config?.boolean("save_timelapse") ?: true
                     eSent = task.config?.boolean("sentry") ?: false
                     showEdit = true
-                }) {
+                }, contentDescription = "Editar tarea") {
                     Text("✏️")
                 }
-                OutlinedButton(onClick = {
+                NeumorphicTextButton(onClick = {
                     feedback = null
                     zipLauncher.launch("wplace_task_${task.id}.zip")
-                }) {
+                }, contentDescription = "Descargar datos de la tarea") {
                     Text("📥 ZIP")
                 }
             }
@@ -186,16 +204,16 @@ private fun TaskCard(task: TaskInfo, vm: WPlaceViewModel, context: android.conte
             title = { Text("Editar tarea #${task.id}") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(value = eName, onValueChange = { eName = it },
-                        label = { Text("Nombre") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                    OutlinedTextField(value = eInterval, onValueChange = { eInterval = it },
-                        label = { Text("Intervalo (min)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                    OutlinedTextField(value = eAlert, onValueChange = { eAlert = it },
-                        label = { Text("Alerta de cuota (%)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                    OutlinedTextField(value = eMb, onValueChange = { eMb = it },
-                        label = { Text("Límite (MB)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                    OutlinedTextField(value = eDur, onValueChange = { eDur = it },
-                        label = { Text("Duración (horas, 0 = inf)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    NeumorphicTextField(value = eName, onValueChange = { eName = it },
+                        label = "Nombre", modifier = Modifier.fillMaxWidth())
+                    NeumorphicTextField(value = eInterval, onValueChange = { eInterval = it },
+                        label = "Intervalo (min)", modifier = Modifier.fillMaxWidth())
+                    NeumorphicTextField(value = eAlert, onValueChange = { eAlert = it },
+                        label = "Alerta de cuota (%)", modifier = Modifier.fillMaxWidth())
+                    NeumorphicTextField(value = eMb, onValueChange = { eMb = it },
+                        label = "Límite (MB)", modifier = Modifier.fillMaxWidth())
+                    NeumorphicTextField(value = eDur, onValueChange = { eDur = it },
+                        label = "Duración (horas, 0 = inf)", modifier = Modifier.fillMaxWidth())
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Switch(checked = eTl, onCheckedChange = { eTl = it })
                         Spacer(Modifier.width(8.dp))
@@ -209,7 +227,7 @@ private fun TaskCard(task: TaskInfo, vm: WPlaceViewModel, context: android.conte
                 }
             },
             confirmButton = {
-                Button(enabled = !editBusy, onClick = {
+                NeumorphicButton(enabled = !editBusy, onClick = {
                     editBusy = true
                     val config = buildConfigJson(mapOf(
                         "name" to eName,
@@ -231,6 +249,23 @@ private fun TaskCard(task: TaskInfo, vm: WPlaceViewModel, context: android.conte
             },
             dismissButton = {
                 TextButton(onClick = { showEdit = false }) { Text("Cancelar") }
+            },
+        )
+    }
+
+    if (confirmDelete) {
+        AlertDialog(
+            onDismissRequest = { confirmDelete = false },
+            title = { Text("Eliminar tarea") },
+            text = { Text("¿Seguro que quieres eliminar la tarea «${task.name}»? Esta acción no se puede deshacer.") },
+            confirmButton = {
+                NeumorphicButton(onClick = {
+                    confirmDelete = false
+                    vm.runApi({ ApiClient.api().deleteTask(task.id) }) { vm.refreshStatus() }
+                }) { Text("Eliminar") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmDelete = false }) { Text("Cancelar") }
             },
         )
     }

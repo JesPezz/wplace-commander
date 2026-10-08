@@ -7,11 +7,18 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.wplace.commander.data.ProxySetRequest
 import com.wplace.commander.data.TelegramSetRequest
 import com.wplace.commander.network.ApiClient
 import com.wplace.commander.ui.WPlaceViewModel
+import com.wplace.commander.ui.theme.NeumorphicButton
+import com.wplace.commander.ui.theme.NeumorphicSegmented
+import com.wplace.commander.ui.theme.NeumorphicTextField
+import com.wplace.commander.ui.theme.NeumorphicTextButton
+import com.wplace.commander.ui.theme.liveRegion
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -20,10 +27,12 @@ fun TelegramProxyScreen(vm: WPlaceViewModel, modifier: Modifier = Modifier) {
     var tab by remember { mutableStateOf(0) }
 
     Column(modifier = modifier.fillMaxSize()) {
-        TabRow(selectedTabIndex = tab) {
-            Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("Telegram") })
-            Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("Proxy") })
-        }
+        NeumorphicSegmented(
+            options = listOf("Telegram", "Proxy"),
+            selectedIndex = tab,
+            onSelect = { tab = it },
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+        )
 
         when (tab) {
             0 -> TelegramTab(api, vm)
@@ -61,11 +70,11 @@ private fun TelegramTab(api: com.wplace.commander.network.WPlaceApi, vm: WPlaceV
         Text("Telegram", style = MaterialTheme.typography.titleLarge)
         Text("Credenciales globales: valen para todas las tareas, misiones y el planificador.",
             style = MaterialTheme.typography.bodyMedium)
-        OutlinedTextField(value = token, onValueChange = { token = it },
-            label = { Text("Bot token") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-        OutlinedTextField(value = chat, onValueChange = { chat = it },
-            label = { Text("Chat ID") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-        Button(onClick = {
+        NeumorphicTextField(value = token, onValueChange = { token = it },
+            label = "Bot token", modifier = Modifier.fillMaxWidth())
+        NeumorphicTextField(value = chat, onValueChange = { chat = it },
+            label = "Chat ID", modifier = Modifier.fillMaxWidth())
+        NeumorphicButton(onClick = {
             ApiClient.saveTgCreds(context, token, chat)
             status = "Guardando…"
             vm.runApi({
@@ -77,7 +86,7 @@ private fun TelegramTab(api: com.wplace.commander.network.WPlaceApi, vm: WPlaceV
         }, modifier = Modifier.fillMaxWidth()) {
             Text("Guardar credenciales globales")
         }
-        status?.let { Text(it, color = MaterialTheme.colorScheme.primary) }
+        status?.let { Text(it, color = MaterialTheme.colorScheme.primary, modifier = Modifier.liveRegion()) }
         Text("Estas credenciales se usarán automáticamente al crear misiones y activar el planificador.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -109,17 +118,18 @@ private fun ProxyTab(api: com.wplace.commander.network.WPlaceApi, vm: WPlaceView
     ) {
         Text("Proxy", style = MaterialTheme.typography.titleLarge)
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Switch(checked = enabled, onCheckedChange = { enabled = it })
+            Switch(checked = enabled, onCheckedChange = { enabled = it },
+                modifier = Modifier.semantics { contentDescription = "Usar proxy" })
             Spacer(Modifier.width(8.dp))
             Text(if (enabled) "Proxy activo" else "Proxy desactivado")
         }
-        OutlinedTextField(value = host, onValueChange = { host = it },
-            label = { Text("Host") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-        OutlinedTextField(value = port, onValueChange = { port = it },
-            label = { Text("Puerto") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-        OutlinedTextField(value = user, onValueChange = { user = it },
-            label = { Text("Usuario") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-        Button(onClick = {
+        NeumorphicTextField(value = host, onValueChange = { host = it },
+            label = "Host", modifier = Modifier.fillMaxWidth())
+        NeumorphicTextField(value = port, onValueChange = { port = it },
+            label = "Puerto", modifier = Modifier.fillMaxWidth())
+        NeumorphicTextField(value = user, onValueChange = { user = it },
+            label = "Usuario", modifier = Modifier.fillMaxWidth())
+        NeumorphicButton(onClick = {
             result = null
             val req = ProxySetRequest(enabled, host.trim(), port.trim(), user.trim())
             vm.runApi({
@@ -129,7 +139,7 @@ private fun ProxyTab(api: com.wplace.commander.network.WPlaceApi, vm: WPlaceView
         }, modifier = Modifier.fillMaxWidth()) {
             Text("Guardar proxy")
         }
-        OutlinedButton(onClick = {
+        NeumorphicTextButton(onClick = {
             result = null
             vm.runApi({
                 val r = api.proxyCheckIp()
@@ -138,6 +148,6 @@ private fun ProxyTab(api: com.wplace.commander.network.WPlaceApi, vm: WPlaceView
         }, modifier = Modifier.fillMaxWidth()) {
             Text("Comprobar IP del proxy")
         }
-        result?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+        result?.let { Text(it, style = MaterialTheme.typography.bodySmall, modifier = Modifier.liveRegion()) }
     }
 }

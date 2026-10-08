@@ -9,6 +9,7 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import com.wplace.commander.network.AppContextProvider
@@ -19,6 +20,7 @@ import com.wplace.commander.ui.radar.RadarScreen
 import com.wplace.commander.ui.system.SystemScreen
 import com.wplace.commander.ui.telegram.TelegramProxyScreen
 import com.wplace.commander.ui.theme.WPlaceTheme
+import com.wplace.commander.ui.theme.neumorphicColors
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.compose.runtime.collectAsState
 import androidx.lifecycle.viewmodel.initializer
@@ -65,10 +67,14 @@ fun AppRoot(vm: WPlaceViewModel) {
     ModalNavigationDrawer(
         drawerState = drawerState,
         drawerContent = {
-            ModalDrawerSheet {
+            val neo = neumorphicColors()
+            ModalDrawerSheet(
+                drawerContainerColor = MaterialTheme.colorScheme.background,
+                drawerContentColor = neo.text,
+            ) {
                 Text("WPlace Commander", style = MaterialTheme.typography.titleMedium,
                     modifier = Modifier.padding(16.dp))
-                HorizontalDivider()
+                HorizontalDivider(color = neo.shadow.copy(alpha = 0.2f))
                 items.forEach { item ->
                     NavigationDrawerItem(
                         label = { Text(item.label) },
@@ -79,12 +85,21 @@ fun AppRoot(vm: WPlaceViewModel) {
                             scope.launch { drawerState.close() }
                         },
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                        colors = NavigationDrawerItemDefaults.colors(
+                            selectedContainerColor = neo.accent,
+                            selectedTextColor = neo.onAccent,
+                            selectedIconColor = neo.onAccent,
+                            unselectedContainerColor = Color.Transparent,
+                            unselectedTextColor = neo.text,
+                            unselectedIconColor = neo.text,
+                        ),
                     )
                 }
             }
         },
     ) {
         Scaffold(
+            containerColor = MaterialTheme.colorScheme.background,
             topBar = {
                 TopAppBar(
                     title = { Text(items.firstOrNull { it.screen == selected }?.label ?: "") },
@@ -93,6 +108,11 @@ fun AppRoot(vm: WPlaceViewModel) {
                             Icon(Icons.Filled.Menu, contentDescription = "Abrir menú")
                         }
                     },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = MaterialTheme.colorScheme.background,
+                        titleContentColor = MaterialTheme.colorScheme.onBackground,
+                        navigationIconContentColor = MaterialTheme.colorScheme.onBackground,
+                    ),
                 )
             },
         ) { padding ->

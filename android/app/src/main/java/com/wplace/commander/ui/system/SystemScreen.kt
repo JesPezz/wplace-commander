@@ -6,12 +6,14 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
 import com.wplace.commander.network.ApiClient
@@ -19,18 +21,33 @@ import com.wplace.commander.ui.WPlaceViewModel
 import com.wplace.commander.ui.theme.ThemeMode
 import com.wplace.commander.util.downloadZipToCache
 import com.wplace.commander.util.downloadZipToUri
+import com.wplace.commander.network.UpdateChecker
+import com.wplace.commander.network.UpdateInfo
+import kotlinx.coroutines.launch
+import com.wplace.commander.ui.theme.NeumorphicButton
+import com.wplace.commander.ui.theme.NeumorphicCard
+import com.wplace.commander.ui.theme.NeumorphicTextField
+import com.wplace.commander.ui.theme.NeumorphicTextButton
+import com.wplace.commander.ui.theme.liveRegion
+import com.wplace.commander.BuildConfig
 import java.io.File
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SystemScreen(vm: WPlaceViewModel, modifier: Modifier = Modifier) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val serverIp by vm.serverIp.collectAsState()
     var ip by remember { mutableStateOf(serverIp) }
     var themeResult by remember { mutableStateOf<String?>(null) }
     var backupResult by remember { mutableStateOf<String?>(null) }
     var backupBusy by remember { mutableStateOf(false) }
     var cachedZip by remember { mutableStateOf<File?>(null) }
+    var updateInfo by remember { mutableStateOf<UpdateInfo?>(null) }
+    var updateChecking by remember { mutableStateOf(false) }
+    var updateMsg by remember { mutableStateOf<String?>(null) }
+    var confirmTasks by remember { mutableStateOf(false) }
+    var confirmPhotos by remember { mutableStateOf(false) }
 
     val backupLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/zip")
@@ -67,19 +84,51 @@ fun SystemScreen(vm: WPlaceViewModel, modifier: Modifier = Modifier) {
     ) {
         Text("Sistema", style = MaterialTheme.typography.titleLarge)
 
-        Card {
+        NeumorphicCard {
+            Column(Modifier.padding(16.dp)) {
+                Text("Versión", style = MaterialTheme.typography.titleMedium)
+                Text("WPlace Commander v" + BuildConfig.VERSION_NAME + " (" + BuildConfig.VERSION_CODE + ")", style = MaterialTheme.typography.bodyMedium)
+            }
+        }
+
+        NeumorphicCard {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("Actualizaciones", style = MaterialTheme.typography.titleMedium)
+                if (updateInfo?.hasUpdate == true) {
+                    Text("Nueva versión v${updateInfo?.latestVersion} disponible", style = MaterialTheme.typography.bodyMedium)
+                    NeumorphicTextButton(onClick = {
+                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(updateInfo?.downloadUrl ?: updateInfo?.url))
+                        context.startActivity(intent)
+                    }, modifier = Modifier.fillMaxWidth()) { Text("Descargar APK") }
+                } else if (updateMsg != null) {
+                    Text(updateMsg ?: "", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.liveRegion())
+                }
+                NeumorphicButton(onClick = {
+                    scope.launch {
+                        updateChecking = true; updateMsg = null
+                        try { updateInfo = UpdateChecker.check() }
+                        catch (_: Exception) {}
+                        updateMsg = if (updateInfo?.hasUpdate == true) "Hay actualización disponible" else "Estás en la última versión"
+                        updateChecking = false
+                    }
+                }, enabled = !updateChecking, modifier = Modifier.fillMaxWidth()) {
+                    Text(if (updateChecking) "Buscando..." else "Comprobar actualizaciones")
+                }
+            }
+        }
+
+        NeumorphicCard {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text("Servidor", style = MaterialTheme.typography.titleMedium)
-                OutlinedTextField(value = ip, onValueChange = { ip = it },
-                    label = { Text("Dirección del servidor") }, singleLine = true,
-                    modifier = Modifier.fillMaxWidth())
-                Button(onClick = { vm.setServer(ip) }, modifier = Modifier.fillMaxWidth()) {
+                NeumorphicTextField(value = ip, onValueChange = { ip = it },
+                    label = "Dirección del servidor", modifier = Modifier.fillMaxWidth())
+                NeumorphicButton(onClick = { vm.setServer(ip) }, modifier = Modifier.fillMaxWidth()) {
                     Text("Conectar")
                 }
             }
         }
 
-        Card {
+        NeumorphicCard {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text("Tema", style = MaterialTheme.typography.titleMedium)
                 val current by vm.themeMode.collectAsState()
@@ -89,55 +138,96 @@ fun SystemScreen(vm: WPlaceViewModel, modifier: Modifier = Modifier) {
                     Triple("dark", "Oscuro", ThemeMode.DARK),
                     Triple("high_contrast", "Alto contraste", ThemeMode.HIGH_CONTRAST),
                 )
-                options.forEach { (name, label, mode) ->
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        RadioButton(
-                            selected = current == mode,
-                            onClick = { vm.setTheme(mode); themeResult = null },
-                        )
+                options.forEach { (_, label, mode) ->
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .selectable(
+                                selected = current == mode,
+                                role = Role.RadioButton,
+                                onClick = { vm.setTheme(mode); themeResult = null },
+                            ),
+                    ) {
+                        RadioButton(selected = current == mode, onClick = null)
                         Spacer(Modifier.width(8.dp))
                         Text(label)
                     }
                 }
-                themeResult?.let { Text(it) }
+                themeResult?.let { Text(it, modifier = Modifier.liveRegion()) }
             }
         }
 
-        Card {
+        NeumorphicCard {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text("Respaldo", style = MaterialTheme.typography.titleMedium)
-                Button(
+                NeumorphicButton(
                     onClick = { backupLauncher.launch("wplace_backup.zip") },
                     enabled = !backupBusy,
                     modifier = Modifier.fillMaxWidth(),
                 ) {
                     Text(if (backupBusy) "Descargando…" else "Exportar copia de seguridad (ZIP)")
                 }
-                backupResult?.let { Text(it, color = MaterialTheme.colorScheme.primary) }
+                backupResult?.let { Text(it, color = MaterialTheme.colorScheme.primary, modifier = Modifier.liveRegion()) }
                 if (cachedZip != null) {
-                    OutlinedButton(onClick = { openZip() }, modifier = Modifier.fillMaxWidth()) {
+                    NeumorphicTextButton(onClick = { openZip() }, modifier = Modifier.fillMaxWidth()) {
                         Text("Abrir ZIP")
                     }
                 }
             }
         }
 
-        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)) {
+        NeumorphicCard(containerColor = MaterialTheme.colorScheme.errorContainer) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("Zona de peligro", style = MaterialTheme.typography.titleMedium)
-                OutlinedButton(onClick = { vm.runApi({
-                    ApiClient.api().stopAll()
-                    ApiClient.api().deleteTasks()
-                }) { vm.refreshStatus() } }, modifier = Modifier.fillMaxWidth()) {
+                Text("Zona de peligro", style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onErrorContainer)
+                NeumorphicTextButton(onClick = { confirmTasks = true }, modifier = Modifier.fillMaxWidth()) {
                     Text("Detener y eliminar todas las tareas")
                 }
-                OutlinedButton(onClick = { vm.runApi({
-                    ApiClient.api().stopAll()
-                    ApiClient.api().deletePhotos()
-                }) { vm.refreshStatus() } }, modifier = Modifier.fillMaxWidth()) {
+                NeumorphicTextButton(onClick = { confirmPhotos = true }, modifier = Modifier.fillMaxWidth()) {
                     Text("Eliminar todas las fotos")
                 }
             }
         }
+    }
+
+    if (confirmTasks) {
+        AlertDialog(
+            onDismissRequest = { confirmTasks = false },
+            title = { Text("Eliminar todas las tareas") },
+            text = { Text("Se detendrán y eliminarán TODAS las tareas y sus datos. Esta acción no se puede deshacer.") },
+            confirmButton = {
+                NeumorphicButton(onClick = {
+                    confirmTasks = false
+                    vm.runApi({
+                        ApiClient.api().stopAll()
+                        ApiClient.api().deleteTasks()
+                    }) { vm.refreshStatus() }
+                }) { Text("Eliminar todo") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmTasks = false }) { Text("Cancelar") }
+            },
+        )
+    }
+
+    if (confirmPhotos) {
+        AlertDialog(
+            onDismissRequest = { confirmPhotos = false },
+            title = { Text("Eliminar todas las fotos") },
+            text = { Text("Se eliminarán TODAS las fotos de timelapse y centinela. Esta acción no se puede deshacer.") },
+            confirmButton = {
+                NeumorphicButton(onClick = {
+                    confirmPhotos = false
+                    vm.runApi({
+                        ApiClient.api().stopAll()
+                        ApiClient.api().deletePhotos()
+                    }) { vm.refreshStatus() }
+                }) { Text("Eliminar todo") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmPhotos = false }) { Text("Cancelar") }
+            },
+        )
     }
 }

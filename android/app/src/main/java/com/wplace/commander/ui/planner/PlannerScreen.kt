@@ -11,6 +11,11 @@ import androidx.compose.ui.unit.dp
 import com.wplace.commander.data.PlanSetRequest
 import com.wplace.commander.network.ApiClient
 import com.wplace.commander.ui.WPlaceViewModel
+import com.wplace.commander.ui.theme.NeumorphicButton
+import com.wplace.commander.ui.theme.NeumorphicCard
+import com.wplace.commander.ui.theme.NeumorphicProgress
+import com.wplace.commander.ui.theme.NeumorphicTextField
+import com.wplace.commander.ui.theme.liveRegion
 import kotlinx.coroutines.delay
 import java.util.Calendar
 
@@ -79,18 +84,18 @@ fun PlannerScreen(vm: WPlaceViewModel, modifier: Modifier = Modifier) {
         Text("Calcula la alerta táctica de la reserva y su cronograma.",
             style = MaterialTheme.typography.bodyMedium)
 
-        Card {
+        NeumorphicCard {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                OutlinedTextField(value = actuales, onValueChange = { actuales = it },
-                    label = { Text("Píxeles Actuales (Reserva)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(value = maximos, onValueChange = { maximos = it },
-                    label = { Text("Capacidad Máxima") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(value = objPct, onValueChange = { objPct = it },
-                    label = { Text("Objetivo de Disparo (%)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(value = resPct, onValueChange = { resPct = it },
-                    label = { Text("Reserva de Defensa (%)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                NeumorphicTextField(value = actuales, onValueChange = { actuales = it },
+                    label = "Píxeles Actuales (Reserva)", modifier = Modifier.fillMaxWidth())
+                NeumorphicTextField(value = maximos, onValueChange = { maximos = it },
+                    label = "Capacidad Máxima", modifier = Modifier.fillMaxWidth())
+                NeumorphicTextField(value = objPct, onValueChange = { objPct = it },
+                    label = "Objetivo de Disparo (%)", modifier = Modifier.fillMaxWidth())
+                NeumorphicTextField(value = resPct, onValueChange = { resPct = it },
+                    label = "Reserva de Defensa (%)", modifier = Modifier.fillMaxWidth())
 
-                Button(
+                NeumorphicButton(
                     onClick = {
                         result = null; warning = null; busy = true
                         val actualesV = actuales.toIntOrNull()
@@ -100,7 +105,7 @@ fun PlannerScreen(vm: WPlaceViewModel, modifier: Modifier = Modifier) {
                         if (actualesV == null || maximosV == null || maximosV <= 0 || objV == null || resV == null) {
                             warning = "Revisa los valores: deben ser numéricos y válidos."
                             busy = false
-                            return@Button
+                            return@NeumorphicButton
                         }
                         // Persistencia de la configuración de la UI
                         prefs.edit().putString("pl_max", maximos.toString())
@@ -133,7 +138,7 @@ fun PlannerScreen(vm: WPlaceViewModel, modifier: Modifier = Modifier) {
                         if (token.isBlank() || chatId.isBlank()) {
                             warning = "Configura las credenciales globales en la pestaña Telegram para recibir la alerta."
                             busy = false
-                            return@Button
+                            return@NeumorphicButton
                         }
                         if (pxFaltantes > 0) {
                             vm.runApi({
@@ -157,19 +162,20 @@ fun PlannerScreen(vm: WPlaceViewModel, modifier: Modifier = Modifier) {
                 ) {
                     Text(if (busy) "Calculando…" else "CALCULAR Y ACTIVAR ALERTA")
                 }
-                warning?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-                result?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+                warning?.let { Text("⚠️ $it", color = MaterialTheme.colorScheme.error, modifier = Modifier.liveRegion()) }
+                result?.let { Text(it, style = MaterialTheme.typography.bodySmall, modifier = Modifier.liveRegion()) }
             }
         }
 
         // Barra de progreso y cuenta regresiva
         if (planActive) {
-            Card {
+            NeumorphicCard {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text("Progreso de generación", style = MaterialTheme.typography.titleMedium)
-                    LinearProgressIndicator(
-                        progress = { progress },
-                        modifier = Modifier.fillMaxWidth().height(10.dp),
+                    NeumorphicProgress(
+                        progress = progress,
+                        modifier = Modifier.fillMaxWidth(),
+                        contentDescription = "Progreso de generación de píxeles",
                     )
                     val pct = if (maxPx > 0) (pxActualesCalc / maxPx * 100.0) else 0.0
                     Text("Generación: $pxActualesCalc / ${maxPx.toInt()} px (${"%.1f".format(pct)}%)",
@@ -190,7 +196,7 @@ fun PlannerScreen(vm: WPlaceViewModel, modifier: Modifier = Modifier) {
         }
 
         // Resultados y cronograma (sincronizado con el servidor)
-        Card {
+        NeumorphicCard {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("Resultados y Cronograma", style = MaterialTheme.typography.titleMedium)
                 val txt = if (planActive && planConfigTxt.isNotBlank()) planConfigTxt else result
@@ -199,6 +205,7 @@ fun PlannerScreen(vm: WPlaceViewModel, modifier: Modifier = Modifier) {
                     style = MaterialTheme.typography.bodySmall,
                     color = if (planActive) MaterialTheme.colorScheme.primary
                             else MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.liveRegion(),
                 )
             }
         }

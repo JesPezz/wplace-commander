@@ -8,6 +8,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -19,11 +21,18 @@ import com.wplace.commander.data.FavoritesStore
 import com.wplace.commander.data.OverlayImporter
 import com.wplace.commander.network.ApiClient
 import com.wplace.commander.ui.WPlaceViewModel
+import com.wplace.commander.ui.theme.NeumorphicButton
+import com.wplace.commander.ui.theme.NeumorphicCard
+import com.wplace.commander.ui.theme.NeumorphicTextField
+import com.wplace.commander.ui.theme.NeumorphicTextButton
+import com.wplace.commander.ui.theme.liveRegion
+import com.wplace.commander.ui.theme.wplaceStatusColors
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MissionScreen(vm: WPlaceViewModel, modifier: Modifier = Modifier) {
     val context = LocalContext.current
+    val statusColors = wplaceStatusColors()
     var name by remember { mutableStateOf("") }
     var xs by remember { mutableStateOf("") }
     var ys by remember { mutableStateOf("") }
@@ -116,26 +125,26 @@ fun MissionScreen(vm: WPlaceViewModel, modifier: Modifier = Modifier) {
     ) {
         Text("Nueva misión", style = MaterialTheme.typography.titleLarge)
 
-        Card {
+        NeumorphicCard {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                OutlinedTextField(value = name, onValueChange = { name = it },
-                    label = { Text("Nombre de la misión") }, singleLine = true,
+                NeumorphicTextField(value = name, onValueChange = { name = it },
+                    label = "Nombre de la misión",
                     modifier = Modifier.fillMaxWidth())
 
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(value = xs, onValueChange = { xs = it },
-                        label = { Text("X inicio") }, singleLine = true,
+                    NeumorphicTextField(value = xs, onValueChange = { xs = it },
+                        label = "X inicio",
                         modifier = Modifier.weight(1f))
-                    OutlinedTextField(value = ys, onValueChange = { ys = it },
-                        label = { Text("Y inicio") }, singleLine = true,
+                    NeumorphicTextField(value = ys, onValueChange = { ys = it },
+                        label = "Y inicio",
                         modifier = Modifier.weight(1f))
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(value = xe, onValueChange = { xe = it },
-                        label = { Text("X fin") }, singleLine = true,
+                    NeumorphicTextField(value = xe, onValueChange = { xe = it },
+                        label = "X fin",
                         modifier = Modifier.weight(1f))
-                    OutlinedTextField(value = ye, onValueChange = { ye = it },
-                        label = { Text("Y fin") }, singleLine = true,
+                    NeumorphicTextField(value = ye, onValueChange = { ye = it },
+                        label = "Y fin",
                         modifier = Modifier.weight(1f))
                 }
 
@@ -143,7 +152,7 @@ fun MissionScreen(vm: WPlaceViewModel, modifier: Modifier = Modifier) {
                 Text("Favoritos", style = MaterialTheme.typography.titleMedium)
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Box(Modifier.weight(1f)) {
-                        OutlinedButton(
+                        NeumorphicTextButton(
                             onClick = { favMenuOpen = true },
                             modifier = Modifier.fillMaxWidth(),
                         ) {
@@ -165,25 +174,33 @@ fun MissionScreen(vm: WPlaceViewModel, modifier: Modifier = Modifier) {
                             }
                         }
                     }
-                    OutlinedButton(onClick = { favName = name.ifBlank { "Zona" }; favDialog = true }) {
+                    NeumorphicTextButton(
+                        onClick = { favName = name.ifBlank { "Zona" }; favDialog = true },
+                        contentDescription = "Guardar la zona actual como favorita",
+                    ) {
                         Text("💾 Guardar")
                     }
-                    OutlinedButton(
+                    NeumorphicTextButton(
                         onClick = {
-                            val key = selectedFav ?: return@OutlinedButton
+                            val key = selectedFav ?: return@NeumorphicTextButton
                             favorites = favorites - key
                             selectedFav = null
                             persistFavorites()
                             favFeedback = "Favorito borrado"
                         },
                         enabled = selectedFav != null,
+                        contentDescription = "Eliminar el favorito seleccionado",
                     ) {
                         Text("🗑")
                     }
                 }
-                favFeedback?.let { Text(it, color = MaterialTheme.colorScheme.primary) }
+                favFeedback?.let {
+                    val isError = it.startsWith("Error")
+                    Text(it, color = if (isError) statusColors.error else statusColors.success,
+                        modifier = Modifier.liveRegion())
+                }
 
-                OutlinedButton(
+                NeumorphicTextButton(
                     onClick = { overlayLauncher.launch(arrayOf("*/*")) },
                     modifier = Modifier.fillMaxWidth(),
                 ) {
@@ -191,30 +208,32 @@ fun MissionScreen(vm: WPlaceViewModel, modifier: Modifier = Modifier) {
                 }
 
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Switch(checked = saveTl, onCheckedChange = { saveTl = it })
+                    Switch(checked = saveTl, onCheckedChange = { saveTl = it },
+                        modifier = Modifier.semantics { contentDescription = "Guardar timelapse" })
                     Spacer(Modifier.width(8.dp))
                     Text("Guardar timelapse")
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Switch(checked = sentry, onCheckedChange = { sentry = it })
+                    Switch(checked = sentry, onCheckedChange = { sentry = it },
+                        modifier = Modifier.semantics { contentDescription = "Modo centinela (detección de cambios)" })
                     Spacer(Modifier.width(8.dp))
                     Text("Modo centinela (detección de cambios)")
                 }
 
-                OutlinedTextField(value = interval, onValueChange = { interval = it },
-                    label = { Text("Intervalo (minutos)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(value = duration, onValueChange = { duration = it },
-                    label = { Text("Duración (horas, 0 = infinita)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(value = limitMb, onValueChange = { limitMb = it },
-                    label = { Text("Límite de capturas (MB)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(value = alertPct, onValueChange = { alertPct = it },
-                    label = { Text("Alerta de cuota (%)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                NeumorphicTextField(value = interval, onValueChange = { interval = it },
+                    label = "Intervalo (minutos)", modifier = Modifier.fillMaxWidth())
+                NeumorphicTextField(value = duration, onValueChange = { duration = it },
+                    label = "Duración (horas, 0 = infinita)", modifier = Modifier.fillMaxWidth())
+                NeumorphicTextField(value = limitMb, onValueChange = { limitMb = it },
+                    label = "Límite de capturas (MB)", modifier = Modifier.fillMaxWidth())
+                NeumorphicTextField(value = alertPct, onValueChange = { alertPct = it },
+                    label = "Alerta de cuota (%)", modifier = Modifier.fillMaxWidth())
 
                 Text("Las alertas de Telegram usan las credenciales globales de la pestaña Telegram.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
 
-                Button(
+                NeumorphicButton(
                     onClick = {
                         val xS = xs.toLong(); val yS = ys.toLong()
                         val xE = xe.toLong(); val yE = ye.toLong()
@@ -242,26 +261,26 @@ fun MissionScreen(vm: WPlaceViewModel, modifier: Modifier = Modifier) {
                 ) {
                     Text(if (busy) "Creando…" else "Crear misión")
                 }
-                result?.let { Text(it, color = MaterialTheme.colorScheme.primary) }
+                result?.let { Text(it, color = statusColors.success, modifier = Modifier.liveRegion()) }
             }
         }
 
         // Vista previa bajo demanda (se refresca cada vez que se abre)
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Button(onClick = {
+            NeumorphicButton(onClick = {
                 showPreview = !showPreview
                 if (showPreview) previewRefresh += 1
             }) {
                 Text(if (showPreview) "Ocultar vista previa" else "📷 Vista previa")
             }
             if (showPreview && coords != null) {
-                TextButton(onClick = { previewRefresh += 1 }) {
+                NeumorphicTextButton(onClick = { previewRefresh += 1 }) {
                     Text("🔄 Recargar")
                 }
             }
         }
         if (showPreview && coords != null) {
-            Card(modifier = Modifier.fillMaxWidth().height(380.dp)) {
+            NeumorphicCard(modifier = Modifier.fillMaxWidth().height(380.dp)) {
                 TileViewer(
                     coords = coords,
                     modifier = Modifier.fillMaxSize(),
@@ -280,12 +299,11 @@ fun MissionScreen(vm: WPlaceViewModel, modifier: Modifier = Modifier) {
             onDismissRequest = { favDialog = false },
             title = { Text("Guardar favorito") },
             text = {
-                OutlinedTextField(value = favName, onValueChange = { favName = it },
-                    label = { Text("Nombre de la zona") }, singleLine = true,
-                    modifier = Modifier.fillMaxWidth())
+                NeumorphicTextField(value = favName, onValueChange = { favName = it },
+                    label = "Nombre de la zona", modifier = Modifier.fillMaxWidth())
             },
             confirmButton = {
-                Button(onClick = {
+                NeumorphicButton(onClick = {
                     val f = FavoriteMission(
                         name = name,
                         x_start = xs.toLongOrNull() ?: 0,

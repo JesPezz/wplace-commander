@@ -7,14 +7,15 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalConfiguration
 
 private val LightColors = lightColorScheme(
     primary = Color(0xFF0078D4),
     onPrimary = Color.White,
     secondary = Color(0xFF71C5F1),
-    background = Color(0xFFF3F3F3),
-    surface = Color.White,
+    background = Color(0xFFE0E5EC),
+    surface = Color(0xFFE0E5EC),
     onBackground = Color(0xFF1B1B1B),
     onSurface = Color(0xFF1B1B1B),
 )
@@ -23,8 +24,8 @@ private val DarkColors = darkColorScheme(
     primary = Color(0xFF60CDFF),
     onPrimary = Color(0xFF001019),
     secondary = Color(0xFF001019),
-    background = Color(0xFF202020),
-    surface = Color(0xFF2B2B2B),
+    background = Color(0xFF2C313A),
+    surface = Color(0xFF2C313A),
     onBackground = Color.White,
     onSurface = Color.White,
 )
@@ -41,6 +42,34 @@ private val HighContrastColors = darkColorScheme(
 )
 
 enum class ThemeMode { AUTO, LIGHT, DARK, HIGH_CONTRAST }
+
+/**
+ * Colores semánticos de estado (contraste AA sobre el fondo del tema).
+ * `success`/`error`/... son colores de primer plano (texto/icono) y `on*` el
+ * color del texto cuando el estado se usa como relleno.
+ */
+data class WplaceStatusColors(
+    val success: Color, val onSuccess: Color,
+    val error: Color, val onError: Color,
+    val warning: Color, val onWarning: Color,
+    val info: Color, val onInfo: Color,
+)
+
+@Composable
+fun wplaceStatusColors(): WplaceStatusColors {
+    val dark = MaterialTheme.colorScheme.background.luminance() < 0.35f
+    return if (dark) WplaceStatusColors(
+        success = Color(0xFF6CCB5F), onSuccess = Color(0xFF1B1B1B),
+        error = Color(0xFFFF99A4), onError = Color(0xFF1B1B1B),
+        warning = Color(0xFFFFB900), onWarning = Color(0xFF1B1B1B),
+        info = Color(0xFF60CDFF), onInfo = Color(0xFF001019),
+    ) else WplaceStatusColors(
+        success = Color(0xFF107C10), onSuccess = Color.White,
+        error = Color(0xFFC42B1C), onError = Color.White,
+        warning = Color(0xFF8A4B00), onWarning = Color.White,
+        info = Color(0xFF0B5394), onInfo = Color.White,
+    )
+}
 
 @Composable
 fun isHighContrastEnabled(): Boolean {
