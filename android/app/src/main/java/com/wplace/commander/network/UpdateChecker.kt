@@ -39,7 +39,7 @@ object UpdateChecker {
     suspend fun check(): UpdateInfo = withContext(Dispatchers.IO) {
         try {
             val req = Request.Builder()
-                .url("https://api.github.com/repos/JesPezz/WPlace-Automation-System/releases/latest")
+                .url("https://api.github.com/repos/JesPezz/wplace-commander/releases/latest")
                 .addHeader("Accept", "application/vnd.github+json")
                 .build()
             client.newCall(req).execute().use { res ->

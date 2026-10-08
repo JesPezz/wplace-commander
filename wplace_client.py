@@ -22,7 +22,7 @@ import fluent
 def check_for_updates():
     try:
         import requests
-        r = requests.get("https://api.github.com/repos/JesPezz/WPlace-Automation-System/releases/latest", timeout=5)
+        r = requests.get("https://api.github.com/repos/JesPezz/wplace-commander/releases/latest", timeout=5)
         if r.status_code == 200:
             data = r.json()
             latest = data.get("tag_name","").lstrip("v")
