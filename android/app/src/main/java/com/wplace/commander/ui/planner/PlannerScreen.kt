@@ -14,6 +14,7 @@ import com.wplace.commander.ui.WPlaceViewModel
 import com.wplace.commander.ui.theme.NeumorphicButton
 import com.wplace.commander.ui.theme.NeumorphicCard
 import com.wplace.commander.ui.theme.NeumorphicProgress
+import com.wplace.commander.ui.theme.NeumorphicSegmented
 import com.wplace.commander.ui.theme.NeumorphicTextField
 import com.wplace.commander.ui.theme.liveRegion
 import kotlinx.coroutines.delay
@@ -29,6 +30,7 @@ fun PlannerScreen(vm: WPlaceViewModel, modifier: Modifier = Modifier) {
     var actuales by remember { mutableStateOf("") }
     var maximos by remember { mutableStateOf(prefs.getString("pl_max", "7404") ?: "7404") }
     var objPct by remember { mutableStateOf(prefs.getString("pl_obj", "85") ?: "85") }
+    var objModo by remember { mutableStateOf(prefs.getString("pl_obj_modo", "%") ?: "%") }
     var resPct by remember { mutableStateOf(prefs.getString("pl_res", "25") ?: "25") }
     var result by remember { mutableStateOf<String?>(null) }
     var warning by remember { mutableStateOf<String?>(null) }
@@ -90,8 +92,15 @@ fun PlannerScreen(vm: WPlaceViewModel, modifier: Modifier = Modifier) {
                     label = "Píxeles Actuales (Reserva)", modifier = Modifier.fillMaxWidth())
                 NeumorphicTextField(value = maximos, onValueChange = { maximos = it },
                     label = "Capacidad Máxima", modifier = Modifier.fillMaxWidth())
+                Text("Objetivo de Disparo", style = MaterialTheme.typography.labelMedium)
+                NeumorphicSegmented(
+                    options = listOf("Porcentaje (%)", "Píxeles"),
+                    selectedIndex = if (objModo == "px") 1 else 0,
+                    onSelect = { objModo = if (it == 1) "px" else "%" },
+                )
                 NeumorphicTextField(value = objPct, onValueChange = { objPct = it },
-                    label = "Objetivo de Disparo (%)", modifier = Modifier.fillMaxWidth())
+                    label = if (objModo == "px") "Objetivo (píxeles)" else "Objetivo (%)",
+                    modifier = Modifier.fillMaxWidth())
                 NeumorphicTextField(value = resPct, onValueChange = { resPct = it },
                     label = "Reserva de Defensa (%)", modifier = Modifier.fillMaxWidth())
 
@@ -110,9 +119,11 @@ fun PlannerScreen(vm: WPlaceViewModel, modifier: Modifier = Modifier) {
                         // Persistencia de la configuración de la UI
                         prefs.edit().putString("pl_max", maximos.toString())
                             .putString("pl_obj", objPct.toString())
-                            .putString("pl_res", resPct.toString()).apply()
+                            .putString("pl_res", resPct.toString())
+                            .putString("pl_obj_modo", objModo).apply()
 
-                        val pxObjetivo = (maximosV * (objV / 100f)).toInt()
+                        val pxObjetivo = if (objModo == "px") objV.toInt()
+                                         else (maximosV * (objV / 100f)).toInt()
                         val pxReserva = (maximosV * (resV / 100f)).toInt()
                         val pxGastar = pxObjetivo - pxReserva
                         val pxFaltantes = maxOf(0, pxObjetivo - actualesV)
@@ -124,7 +135,8 @@ fun PlannerScreen(vm: WPlaceViewModel, modifier: Modifier = Modifier) {
                         val horasMargen = ((maximosV - pxObjetivo) * 30) / 3600.0
 
                         val txt = buildString {
-                            append("🎯 Objetivo a alcanzar: $pxObjetivo px (${objV.toInt()}%)\n")
+                            append("🎯 Objetivo a alcanzar: $pxObjetivo px" +
+                                (if (objModo == "px") "" else " (${objV.toInt()}%)") + "\n")
                             append("🛡️ Reserva a dejar: $pxReserva px (${resV.toInt()}%)\n")
                             append("🖌️ Píxeles a pintar por sesión: $pxGastar px\n\n")
                             append("⏱️ Tiempo de recarga estimado: ${"%.2f".format(segundosEspera / 3600.0)} horas\n")

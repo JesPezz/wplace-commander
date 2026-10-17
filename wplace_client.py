@@ -498,11 +498,16 @@ class WPlaceClient:
         self.pl_max.grid(row=1, column=1, padx=10, pady=5, sticky='w')
         fluent.set_automation_name(self.pl_max, "Capacidad máxima", "Máximo de píxeles acumulables")
         
-        ttk.Label(f_in, text="Objetivo de Disparo (%):").grid(row=2, column=0, padx=10, pady=5, sticky='e')
+        ttk.Label(f_in, text="Objetivo de Disparo:").grid(row=2, column=0, padx=10, pady=5, sticky='e')
         self.pl_obj = ttk.Entry(f_in, width=15)
         self.pl_obj.insert(0, str(self.config.get("pl_obj", "85")))
         self.pl_obj.grid(row=2, column=1, padx=10, pady=5, sticky='w')
-        fluent.set_automation_name(self.pl_obj, "Objetivo de disparo", "Porcentaje de capacidad al que se activa la alerta")
+        fluent.set_automation_name(self.pl_obj, "Objetivo de disparo", "Cantidad (porcentaje o píxeles) a la que se activa la alerta")
+
+        self.pl_obj_modo = ttk.Combobox(f_in, width=14, state="readonly", values=("Porcentaje (%)", "Píxeles"))
+        self.pl_obj_modo.set(self.config.get("pl_obj_modo", "Porcentaje (%)"))
+        self.pl_obj_modo.grid(row=2, column=2, padx=10, pady=5, sticky='w')
+        fluent.set_automation_name(self.pl_obj_modo, "Modo del objetivo", "Elegir si el objetivo se mide en porcentaje de la capacidad o en píxeles exactos")
         
         ttk.Label(f_in, text="Reserva de Defensa (%):").grid(row=3, column=0, padx=10, pady=5, sticky='e')
         self.pl_res = ttk.Entry(f_in, width=15)
@@ -575,17 +580,24 @@ class WPlaceClient:
         try:
             actuales = int(self.pl_actuales.get())
             maximos = int(self.pl_max.get())
-            obj_pct = float(self.pl_obj.get())
+            obj_val = float(self.pl_obj.get())
             res_pct = float(self.pl_res.get())
+            modo = self.pl_obj_modo.get()
 
             # --- NUEVO: Persistencia de datos de UI en el cliente ---
             self.config["pl_max"] = maximos
-            self.config["pl_obj"] = obj_pct
+            self.config["pl_obj"] = obj_val
             self.config["pl_res"] = res_pct
+            self.config["pl_obj_modo"] = modo
             self.guardar_config()
             # ---------------------------------------------------------
             
-            px_objetivo = int(maximos * (obj_pct / 100))
+            if modo == "Píxeles":
+                px_objetivo = int(obj_val)
+                obj_lbl = f"{px_objetivo} px"
+            else:
+                px_objetivo = int(maximos * (obj_val / 100))
+                obj_lbl = f"{px_objetivo} px ({obj_val:g}%)"
             px_reserva = int(maximos * (res_pct / 100))
             px_gastar = px_objetivo - px_reserva
             
@@ -595,7 +607,7 @@ class WPlaceClient:
             horas_margen = ((maximos - px_objetivo) * 30) / 3600.0
             
             txt = (
-                f"🎯 Objetivo a alcanzar: {px_objetivo} px ({obj_pct}%)\n"
+                f"🎯 Objetivo a alcanzar: {obj_lbl}\n"
                 f"🛡️ Reserva a dejar: {px_reserva} px ({res_pct}%)\n"
                 f"🖌️ Píxeles a pintar por sesión: {px_gastar} px\n\n"
                 f"⏱️ Tiempo de recarga estimado: {round(segundos_espera / 3600.0, 2)} horas\n"
