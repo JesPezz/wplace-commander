@@ -45,6 +45,8 @@ fun SystemScreen(vm: WPlaceViewModel, modifier: Modifier = Modifier) {
     var cachedZip by remember { mutableStateOf<File?>(null) }
     var updateInfo by remember { mutableStateOf<UpdateInfo?>(null) }
     var updateChecking by remember { mutableStateOf(false) }
+    var updateBusy by remember { mutableStateOf(false) }
+    var updateProgress by remember { mutableStateOf(0) }
     var updateMsg by remember { mutableStateOf<String?>(null) }
     var confirmTasks by remember { mutableStateOf(false) }
     var confirmPhotos by remember { mutableStateOf(false) }
@@ -78,6 +80,13 @@ fun SystemScreen(vm: WPlaceViewModel, modifier: Modifier = Modifier) {
         }
     }
 
+    // Comprueba actualizaciones al abrir la pantalla.
+    LaunchedEffect(Unit) {
+        if (updateInfo == null) {
+            try { updateInfo = UpdateChecker.check() } catch (_: Exception) {}
+        }
+    }
+
     Column(
         modifier = modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
@@ -96,24 +105,41 @@ fun SystemScreen(vm: WPlaceViewModel, modifier: Modifier = Modifier) {
                 Text("Actualizaciones", style = MaterialTheme.typography.titleMedium)
                 if (updateInfo?.hasUpdate == true) {
                     Text("Nueva versión v${updateInfo?.latestVersion} disponible", style = MaterialTheme.typography.bodyMedium)
-                    NeumorphicTextButton(onClick = {
-                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(updateInfo?.downloadUrl ?: updateInfo?.url))
-                        context.startActivity(intent)
-                    }, modifier = Modifier.fillMaxWidth()) { Text("Descargar APK") }
-                } else if (updateMsg != null) {
-                    Text(updateMsg ?: "", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.liveRegion())
+                    if (updateBusy) {
+                        LinearProgressIndicator(progress = { updateProgress / 100f }, modifier = Modifier.fillMaxWidth())
+                        Text("Descargando… $updateProgress%", style = MaterialTheme.typography.bodySmall, modifier = Modifier.liveRegion())
+                    }
+                    NeumorphicButton(enabled = !updateBusy, onClick = {
+                        scope.launch {
+                            updateBusy = true; updateProgress = 0; updateMsg = null
+                            try {
+                                val url = updateInfo?.downloadUrl ?: updateInfo?.url ?: ""
+                                val ok = UpdateChecker.downloadAndInstall(context, url) { updateProgress = it }
+                                updateMsg = if (ok) "Instalador abierto. Confirma la instalación." else
+                                    "Concede «instalar apps desconocidas» y vuelve a pulsar"
+                            } catch (e: Exception) {
+                                updateMsg = "Error al descargar: ${e.message}"
+                            } finally {
+                                updateBusy = false
+                            }
+                        }
+                    }, modifier = Modifier.fillMaxWidth()) {
+                        Text(if (updateBusy) "Descargando…" else "Descargar e instalar")
+                    }
+                } else if (updateMsg == null) {
+                    Text("Comprueba si hay una versión nueva.", style = MaterialTheme.typography.bodyMedium)
                 }
                 NeumorphicButton(onClick = {
                     scope.launch {
                         updateChecking = true; updateMsg = null
-                        try { updateInfo = UpdateChecker.check() }
-                        catch (_: Exception) {}
+                        try { updateInfo = UpdateChecker.check() } catch (_: Exception) {}
                         updateMsg = if (updateInfo?.hasUpdate == true) "Hay actualización disponible" else "Estás en la última versión"
                         updateChecking = false
                     }
-                }, enabled = !updateChecking, modifier = Modifier.fillMaxWidth()) {
+                }, enabled = !updateChecking && !updateBusy, modifier = Modifier.fillMaxWidth()) {
                     Text(if (updateChecking) "Buscando..." else "Comprobar actualizaciones")
                 }
+                updateMsg?.let { Text(it, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.liveRegion()) }
             }
         }
 
