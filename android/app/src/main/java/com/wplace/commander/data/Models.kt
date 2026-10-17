@@ -169,6 +169,7 @@ fun buildConfigJson(map: Map<String, Any>): Map<String, JsonElement> =
             is String -> JsonPrimitive(v)
             is Int -> JsonPrimitive(v)
             is Long -> JsonPrimitive(v)
+            is Float -> JsonPrimitive(v)
             is Double -> JsonPrimitive(v)
             is Boolean -> JsonPrimitive(v)
             else -> JsonPrimitive(v.toString())

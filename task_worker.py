@@ -13,6 +13,11 @@ class TaskWorker:
         self.sentry_dir = sentry_dir
         if self.config.get('source', 'WPlace') != 'WPlace':
             self.config['source'] = 'WPlace'
+        # Normalizar numéricos que algunos clientes envían como texto (p.ej. Android Float -> "60.0")
+        try:
+            self.config['interval'] = float(self.config.get('interval') or 1)
+        except (TypeError, ValueError):
+            self.config['interval'] = 1
         
         self.running = False
         self.paused = False
