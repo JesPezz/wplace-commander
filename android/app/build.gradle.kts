@@ -15,8 +15,8 @@ android {
         applicationId = "com.wplace.commander"
         minSdk = 26
         targetSdk = 34
-        versionCode = 180900
-        versionName = "18.9.0"
+        versionCode = 190000
+        versionName = "19.0"
     }
 
     buildFeatures {
