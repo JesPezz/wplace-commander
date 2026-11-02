@@ -107,3 +107,36 @@ registro que sobrevive a un reinicio ordenado es el de `rsyslog` en `/var/log` (
 apagar); un corte de luz se lo lleva igual. Y ojo con `/etc/rsyslog.conf` comentado: parece que hay logs y no
 hay nada.
 
+
+## 2026-11-02 · Servidor · Cierre de la superficie expuesta (root por 0.0.0.0)
+
+**Síntoma.** Al auditar el reinicio del 02-nov apareció el flanco real, bastante peor de lo que sugerían los
+logs: `opencode serve` escuchaba en **0.0.0.0:4096 como root**, con `OPENCODE_PERMISSION` que **auto-aprueba
+`bash`** (root sin restricciones para quien entre), `sshd` aceptaba **login de root con contraseña**,
+`Portainer` estaba publicado en 9000/9443 **con `/var/run/docker.sock` montado** (root equivalente), y el
+`wplace_server` y `vhusbdarm64` (USB por IP) también en 0.0.0.0. `iptables -P INPUT ACCEPT`, sin firewall.
+
+**Solución aplicada.**
+1. `sshd` (`/etc/ssh/sshd_config`, backup en `/tmp/sshd_config.bak`): `PermitRootLogin prohibit-password`,
+   `PasswordAuthentication no`, `MaxAuthTries 3`. Verificado con `sshd -T` y con un intento real: responde
+   `Permission denied (publickey)`. Ojo: ese fichero **no tiene `Include sshd_config.d/*.conf`**, así que un
+   drop-in en `sshd_config.d/` se ignora en silencio (el primer intento no surtió efecto por eso).
+2. Unit `/etc/systemd/system/fw-lan-guard.service` (no versionada, enabled): limita los puertos de procesos del
+   host **4096, 5000 y 7575** a LAN `192.168.1.0/24` y Tailscale `100.64.0.0/10`; el resto, `DROP`.
+   Comprobado que localhost sigue respondiendo (`127.0.0.1:5000 → 200` y `192.168.1.107:5000 → 200`).
+3. `portainer` detenido y con `--restart=no` (`docker start portainer` para recuperarlo).
+
+**Dos trampas.** (a) Los paquetes a 127.0.0.1 **también pasan por `INPUT`**: sin un `-A INPUT -i lo -j ACCEPT`
+*el primero de la cadena* el DROP deja los servicios inaccesibles incluso en local (pasó: `000`); y como cada
+`-I INPUT` inserta al principio, ese ACCEPT hay que añadirlo **al final** (`ExecStartPost`), o acaba debajo de
+los DROP. (b) Los puertos publicados por **Docker no pasan por `INPUT`** (DNAT en `PREROUTING` → `FORWARD`):
+para cerrarlos habría que usar la cadena `DOCKER-USER` o cambiar el mapeo del contenedor.
+
+**Pendiente.** Revisar en el router si 22, 222, 4096, 5000, 5678, 5800, 9000, 8200 o 8780 están reenviados a
+Internet (zapto.org sugiere que algo sí). Cambiar la contraseña `OPENCODE_SERVER_PASSWORD` del unit
+`opencode.service` (está en claro y es débil) y, si no se usa la web desde fuera de la LAN, pasar su
+`--hostname` a `127.0.0.1`. `n8n` (5678), `jdownloader` (5800) y `appapi-harp` (8200/8780/8782) siguen
+publicados en 0.0.0.0 por Docker.
+
+**Lección.** Antes de mirar quién reinició, mirar qué estaba escuchando: el journal voluntariamente vacío es un
+problema de auditoría, un `opencode serve` con bash como root en 0.0.0.0 es un incidente en espera.
