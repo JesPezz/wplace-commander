@@ -35,6 +35,7 @@ def download_area(coords, source="WPlace", timeout=10):
     tx_s, tx_e = coords["x_start"] // 1000, (coords["x_end"] - 1) // 1000
     ty_s, ty_e = coords["y_start"] // 1000, (coords["y_end"] - 1) // 1000
     session = _get_session()
+    tiles_ok = 0
     for tx in range(tx_s, tx_e + 1):
         for ty in range(ty_s, ty_e + 1):
             url = f"{base_url}/{tx}/{ty}.png"
@@ -43,6 +44,11 @@ def download_area(coords, source="WPlace", timeout=10):
                 if r.status_code == 200:
                     tile = Image.open(BytesIO(r.content)).convert("RGBA")
                     full_img.paste(tile, ((tx * 1000) - coords["x_start"], (ty * 1000) - coords["y_start"]), tile)
+                    tiles_ok += 1
             except Exception:
                 pass
+    # Ningún tile cargado (red/DNS caída): es un fallo, no un lienzo vacío válido.
+    # Sin esto el worker guarda una imagen negra como captura y baseline (alertas falsas).
+    if not tiles_ok:
+        return None
     return full_img
