@@ -1,5 +1,5 @@
 #define MyAppName "WPlace Commander"
-#define MyAppVersion "18.8.0"
+#define MyAppVersion "19.1.0"
 #define MyAppPublisher "JesPezz"
 #define MyAppURL "https://github.com/JesPezz/WPlace-Automation-System"
 #define MyAppExeName "wplace_client.exe"
