@@ -75,3 +75,35 @@ sudo systemctl restart systemd-journald
 ```
 
 Y, si se quiere cerrar el aviso del FAT, `sudo dosfsck -a /dev/nvme0n1p1` con la partición desmontada.
+
+## 2026-11-02 · Servidor · El journal no puede ser persistente: el registro va por rsyslog
+
+**Síntoma.** Tras aplicar el «pendiente» de la entrada anterior (`Storage=persistent` + `mkdir /var/log/journal`),
+`journald` seguía anunciando solo `Runtime Journal (/run/log/journal/…)` y dejaba `/var/log/journal/<machine-id>/`
+vacío, sin ningún aviso, incluso tras montarle un `--bind` a un directorio del NVMe (comprobado desde su propio
+namespace con `nsenter`) y crearle a mano el subdirectorio por `machine-id`. Sí leía el fichero (un
+`RuntimeMaxUse=1G` cambiaba el mensaje), y `Storage=none` lo dejaba sin socket, así que la clave se parseaba.
+
+**Causa raíz.** `/var/log` **no es un directorio del disco**: `folder2ram` (OMV) lo monta en **tmpfs** y guarda
+la copia real en `/var/folder2ram/var/log`. Con esa disposición `journald` no persiste aunque se le pida. Y el
+otro registro posible estaba mudo: `rsyslog` está activo pero **todas las reglas de salida de
+`/etc/rsyslog.conf` están comentadas**, así que `/var/log/auth.log` y `/var/log/syslog` llevaban en **0 B desde
+el 2025-09-14** → no existía ningún registro de logins SSH (de ahí que el reinicio no se pueda atribuir).
+
+**Solución.** Se descartó forzar `journald` (se revirtió a `Storage=volatile`, se eliminó la unit
+`journal-a-disco.service` y su drop-in, que no hacían nada) y se activó el registro duradero por `rsyslog` con
+`/etc/rsyslog.d/00-local-registro.conf`:
+
+```
+*.*;auth,authpriv.none                -/var/log/syslog
+auth,authpriv.*                       /var/log/auth.log
+```
+
+Verificado: un `logger -p authpriv.notice` y un intento de SSH real (`sshd[33956]: Connection closed by
+authenticating user root 127.0.0.1`) aparecen en `/var/log/auth.log` al instante.
+
+**Lección.** No perseguir `journald` en esta máquina: `measure` primero si `/var/log` es disco o tmpfs. El
+registro que sobrevive a un reinicio ordenado es el de `rsyslog` en `/var/log` (folder2ram lo sincroniza al
+apagar); un corte de luz se lo lleva igual. Y ojo con `/etc/rsyslog.conf` comentado: parece que hay logs y no
+hay nada.
+

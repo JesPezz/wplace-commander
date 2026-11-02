@@ -1,4 +1,4 @@
-# 🍓 WPlace Automation System v19.0 (Ultimate)
+# 🍓 WPlace Automation System v19.1 (Ultimate)
 
 Sistema profesional de monitoreo, timelapse y vigilancia centinela para el lienzo de WPlace. Diseñado para ejecutarse en **Raspberry Pi** (Servidor) y controlarse remotamente desde una **PC** (Cliente).
 
