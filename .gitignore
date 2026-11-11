@@ -28,6 +28,12 @@ proxies.txt
 # Logs y llaves
 *.log
 *.pem
+# Firma del APK: es la clave con la que están instaladas las apps en los teléfonos
+*.keystore
+*.jks
+
+# Overlays importados por el usuario (datos, no fuente)
+overlays/
 
 # Android
 android/.gradle/
